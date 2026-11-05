@@ -220,15 +220,22 @@ class LocalServer(private val ctx: Context) {
     // ---------------- WebSocket signaling ----------------
     private inner class Client(val sock: Socket, val out: OutputStream, val id: String, val name: String, val os: String) {
         fun info(): JSONObject = JSONObject().put("id", id).put("name", name).put("os", os)
-        @Synchronized fun send(text: String) {
+        fun send(text: String) = frame(0x81, text.toByteArray(), null, 0, 0)
+
+        /** Frame biner: prefix (id pengirim) + data[off until off+len], tanpa salin ulang. */
+        fun sendBinary(prefix: ByteArray, data: ByteArray, off: Int, len: Int) = frame(0x82, prefix, data, off, len)
+
+        @Synchronized private fun frame(op: Int, a: ByteArray, b: ByteArray?, off: Int, len: Int) {
             try {
-                val p = text.toByteArray()
+                val size = a.size + (if (b != null) len else 0)
                 val head = when {
-                    p.size < 126 -> byteArrayOf(0x81.toByte(), p.size.toByte())
-                    p.size < 65536 -> byteArrayOf(0x81.toByte(), 126, (p.size shr 8).toByte(), p.size.toByte())
-                    else -> ByteArray(10).also { h -> h[0] = 0x81.toByte(); h[1] = 127; for (i in 0 until 8) h[9 - i] = (p.size.toLong() shr (8 * i)).toByte() }
+                    size < 126 -> byteArrayOf(op.toByte(), size.toByte())
+                    size < 65536 -> byteArrayOf(op.toByte(), 126, (size shr 8).toByte(), size.toByte())
+                    else -> ByteArray(10).also { h -> h[0] = op.toByte(); h[1] = 127; for (i in 0 until 8) h[9 - i] = (size.toLong() shr (8 * i)).toByte() }
                 }
-                out.write(head); out.write(p); out.flush()
+                out.write(head); out.write(a)
+                if (b != null) out.write(b, off, len)
+                out.flush()
             } catch (_: Exception) { }
         }
     }
@@ -252,6 +259,8 @@ class LocalServer(private val ctx: Context) {
         room.add(me)
 
         val frag = ByteArrayOutputStream()
+        var fragOp = 1
+        val myId = me.id.toByteArray()
         try {
             while (true) {
                 val b0 = input.read(); val b1 = input.read()
@@ -267,7 +276,14 @@ class LocalServer(private val ctx: Context) {
                 when (op) {
                     0x8 -> break
                     0x9 -> synchronized(me) { out.write(byteArrayOf(0x8a.toByte(), data.size.toByte())); out.write(data); out.flush() }
-                    0x0, 0x1 -> { frag.write(data); if (fin) { onText(me, room, frag.toString("UTF-8")); frag.reset() } }
+                    0x0, 0x1, 0x2 -> {
+                        if (op != 0) fragOp = op
+                        if (fin && frag.size() == 0) dispatch(me, room, fragOp, data, myId)
+                        else {
+                            frag.write(data)
+                            if (fin) { dispatch(me, room, fragOp, frag.toByteArray(), myId); frag.reset() }
+                        }
+                    }
                 }
             }
         } catch (_: Exception) { }
@@ -276,6 +292,14 @@ class LocalServer(private val ctx: Context) {
         room.forEach { it.send(leave) }
         if (room.isEmpty()) rooms.remove(code)
         try { sock.close() } catch (_: Exception) { }
+    }
+
+    private fun dispatch(me: Client, room: Set<Client>, op: Int, data: ByteArray, myId: ByteArray) {
+        if (op == 0x1) return onText(me, room, String(data, Charsets.UTF_8))
+        // kirim lewat host: 8 byte pertama = id tujuan, diganti id pengirim
+        if (data.size < 8) return
+        val to = String(data, 0, 8, Charsets.US_ASCII)
+        room.firstOrNull { it.id == to }?.sendBinary(myId, data, 8, data.size - 8)
     }
 
     private fun readFully(input: InputStream, b: ByteArray) {

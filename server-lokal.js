@@ -75,15 +75,15 @@ function handleSave(req, res, url) {
 }
 const rooms = new Map(); // code -> Set(client)
 
-function sendWS(sock, str) {
-  if (sock.destroyed) return;
-  const payload = Buffer.from(str);
+function sendWS(sock, data, op = 0x81) {
+  if (sock.destroyed) return true;
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
   const len = payload.length;
   let head;
-  if (len < 126) head = Buffer.from([0x81, len]);
-  else if (len < 65536) { head = Buffer.alloc(4); head[0] = 0x81; head[1] = 126; head.writeUInt16BE(len, 2); }
-  else { head = Buffer.alloc(10); head[0] = 0x81; head[1] = 127; head.writeBigUInt64BE(BigInt(len), 2); }
-  sock.write(Buffer.concat([head, payload]));
+  if (len < 126) head = Buffer.from([op, len]);
+  else if (len < 65536) { head = Buffer.alloc(4); head[0] = op; head[1] = 126; head.writeUInt16BE(len, 2); }
+  else { head = Buffer.alloc(10); head[0] = op; head[1] = 127; head.writeBigUInt64BE(BigInt(len), 2); }
+  return sock.write(Buffer.concat([head, payload]));
 }
 
 server.on('upgrade', (req, sock) => {
@@ -110,7 +110,7 @@ server.on('upgrade', (req, sock) => {
   room.add(me);
   console.log(`+ ${me.name} masuk (${room.size} perangkat)`);
 
-  let buf = Buffer.alloc(0), frag = [];
+  let buf = Buffer.alloc(0), frag = [], fragOp = 1;
   sock.on('data', chunk => {
     buf = Buffer.concat([buf, chunk]);
     while (buf.length >= 2) {
@@ -129,12 +129,26 @@ server.on('upgrade', (req, sock) => {
       buf = buf.subarray(need);
       if (op === 0x8) return sock.end();
       if (op === 0x9) { sock.write(Buffer.concat([Buffer.from([0x8a, data.length]), data])); continue; }
-      if (op === 0x1 || op === 0x0) {
+      if (op === 0x1 || op === 0x2 || op === 0x0) {
+        if (op) fragOp = op;
         frag.push(data);
-        if (fin) { handle(Buffer.concat(frag).toString()); frag = []; }
+        if (fin) {
+          const full = Buffer.concat(frag); frag = [];
+          if (fragOp === 0x2) relayBinary(full); else handle(full.toString());
+        }
       }
     }
   });
+
+  // Kirim lewat host: 8 byte pertama = id tujuan, diganti id pengirim
+  function relayBinary(full) {
+    if (full.length < 8) return;
+    const to = full.subarray(0, 8).toString();
+    for (const c of room) if (c.id === to) {
+      const ok = sendWS(c.sock, Buffer.concat([Buffer.from(me.id), full.subarray(8)]), 0x82);
+      if (!ok) { sock.pause(); const go = () => sock.resume(); c.sock.once('drain', go); c.sock.once('close', go); }
+    }
+  }
 
   function handle(raw) {
     let msg; try { msg = JSON.parse(raw); } catch { return; }

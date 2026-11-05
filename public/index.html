@@ -332,6 +332,7 @@ async function loadIce() {
   return ICE;
 }
 const CHUNK = 64 * 1024;
+const FORCE_RELAY = /[?&]relay=1/.test(location.search);
 const HIGH = 4 * 1024 * 1024;
 
 $('#nameInput').value = store.get('od-name', MYOS + ' ' + rid(3));
@@ -381,9 +382,19 @@ async function connectSignal() {
   await loadIce();
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${CONFIG.signal || location.host}/ws/${S.room}?name=${encodeURIComponent(S.name)}&os=${encodeURIComponent(MYOS)}`);
+  ws.binaryType = 'arraybuffer';
   S.ws = ws; setSig('wait', 'Menghubungkan…');
   ws.onopen = () => { S.retry = 0; setSig('on', 'Terhubung'); clearInterval(S.pingT); S.pingT = setInterval(() => ws.readyState === 1 && ws.send('{"type":"ping"}'), 25000); };
-  ws.onmessage = e => onSignal(JSON.parse(e.data));
+  ws.onmessage = e => {
+    if (typeof e.data !== 'string') {
+      const u = new Uint8Array(e.data, 0, 8);
+      const from = String.fromCharCode(...u);
+      const p = S.peers.get(from);
+      if (p) { if (!p.relay) useRelay(p); onData(p, e.data.slice(8)); }
+      return;
+    }
+    onSignal(JSON.parse(e.data));
+  };
   ws.onclose = () => {
     clearInterval(S.pingT);
     if (S.leaving) return;
@@ -406,6 +417,10 @@ async function onSignal(m) {
     toast(m.peer.name + ' masuk ke ruang.');
   } else if (m.type === 'leave') {
     const p = S.peers.get(m.id); if (p) { closePeer(p); S.peers.delete(m.id); if (S.target === m.id) setTarget('all'); renderPeers(); toast(p.name + ' keluar.'); }
+  } else if (m.type === 'relay') {
+    const p = S.peers.get(m.from); if (!p) return;
+    if (!p.relay) useRelay(p);
+    onData(p, m.data);
   } else if (m.type === 'sdp' || m.type === 'ice') {
     const p = S.peers.get(m.from); if (!p) return;
     try {
@@ -426,15 +441,32 @@ function makePeer(info, initiator) {
   const dc = pc.createDataChannel('od', { negotiated: true, id: 0, ordered: true });
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
-  const p = { id: info.id, name: info.name, os: info.os, pc, dc, open: false, pendingIce: [], queue: [], sending: false, incoming: null };
+  const p = { id: info.id, name: info.name, os: info.os, pc, dc, open: false, relay: false, pendingIce: [], queue: [], sending: false, incoming: null };
+  p.send = d => p.relay ? relaySend(p.id, d) : dc.send(d);
+  p.buffered = () => p.relay ? (S.ws ? S.ws.bufferedAmount : 0) : dc.bufferedAmount;
+  // Mode lokal: bila sambungan langsung tidak terbuka dalam 3 detik, kirim lewat host
+  if (CONFIG.mode === 'local') setTimeout(() => { if (!p.open && S.peers.get(p.id) === p) useRelay(p); }, FORCE_RELAY ? 0 : 3000);
   S.peers.set(p.id, p);
   pc.onicecandidate = e => e.candidate && sig(p.id, { type: 'ice', ice: e.candidate });
-  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') toast('Gagal tersambung langsung ke ' + p.name + '. Coba jaringan lain.', true); renderPeers(); };
-  dc.onopen = () => { p.open = true; renderPeers(); pump(p); };
-  dc.onclose = () => { p.open = false; renderPeers(); };
+  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' && !p.relay) toast('Gagal tersambung langsung ke ' + p.name + '. Coba jaringan lain.', true); renderPeers(); };
+  dc.onopen = () => { if (p.relay) return; p.open = true; renderPeers(); pump(p); };
+  dc.onclose = () => { if (p.relay) return; p.open = false; renderPeers(); };
   dc.onmessage = e => onData(p, e.data);
   if (initiator) (async () => { await pc.setLocalDescription(await pc.createOffer()); sig(p.id, { type: 'sdp', sdp: pc.localDescription }); })();
   return p;
+}
+function useRelay(p) {
+  p.relay = true; p.open = true;
+  try { p.pc.close(); } catch {}
+  renderPeers(); pump(p);
+}
+function relaySend(to, d) {
+  if (!S.ws || S.ws.readyState !== 1) throw new Error('putus');
+  if (typeof d === 'string') return S.ws.send(JSON.stringify({ type: 'relay', to, data: d }));
+  const u = new Uint8Array(8 + d.byteLength);
+  for (let i = 0; i < 8; i++) u[i] = to.charCodeAt(i);
+  u.set(new Uint8Array(d), 8);
+  S.ws.send(u.buffer);
 }
 function closePeer(p) { try { p.dc.close(); p.pc.close(); } catch {} }
 
@@ -442,7 +474,7 @@ function renderPeers() {
   const box = $('#peers');
   if (!S.peers.size) { box.innerHTML = `<div class="empty-peers">Belum ada perangkat lain. Buka halaman ini di perangkat lain${CONFIG.mode === 'local' ? ' yang tersambung ke WiFi/hotspot yang sama' : ', lalu masukkan kode <b>' + esc(S.room || '') + '</b> atau pindai QR dari tombol Undang'}.</div>`; return; }
   const items = [{ id: 'all', name: 'Semua perangkat', sub: S.peers.size + ' perangkat', icon: ICON.all, on: true }]
-    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + ' · siap' : 'menyambung…', icon: osIcon(p.os), on: p.open })));
+    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + (p.relay ? ' · siap (lewat host)' : ' · siap') : 'menyambung…', icon: osIcon(p.os), on: p.open })));
   box.innerHTML = items.map(i => `<button class="peer${i.on ? '' : ' off'}" data-id="${i.id}" aria-pressed="${S.target === i.id}">${i.icon}<span><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></span></button>`).join('');
   box.querySelectorAll('.peer').forEach(b => b.onclick = () => setTarget(b.dataset.id));
 }
@@ -476,21 +508,25 @@ async function pump(p) {
   const { file, id, ui, path } = job;
   ui._job = job;
   try {
-    p.dc.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type }));
+    p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type }));
     let off = 0, last = 0;
     while (off < file.size) {
       if (job.cancel) throw new Error('batal');
       if (!p.open) throw new Error('putus');
-      if (p.dc.bufferedAmount > HIGH) { await new Promise(r => { p.dc.onbufferedamountlow = () => { p.dc.onbufferedamountlow = null; r(); }; }); continue; }
+      if (p.buffered() > HIGH) {
+        if (p.relay) await new Promise(r => setTimeout(r, 15));
+        else await new Promise(r => { p.dc.onbufferedamountlow = () => { p.dc.onbufferedamountlow = null; r(); }; });
+        continue;
+      }
       const buf = await file.slice(off, off + CHUNK).arrayBuffer();
-      p.dc.send(buf); off += buf.byteLength;
+      p.send(buf); off += buf.byteLength;
       const now = performance.now(); if (now - last > 150) { updTransfer(ui, off, file.size); last = now; }
     }
-    p.dc.send(JSON.stringify({ t: 'end', id }));
+    p.send(JSON.stringify({ t: 'end', id }));
     updTransfer(ui, file.size, file.size, 'Terkirim');
   } catch (err) {
     failTransfer(ui, err.message === 'batal' ? 'Dibatalkan' : 'Gagal: koneksi terputus');
-    try { p.dc.send(JSON.stringify({ t: 'abort', id })); } catch {}
+    try { p.send(JSON.stringify({ t: 'abort', id })); } catch {}
   }
   p.sending = false; pump(p);
 }
@@ -656,7 +692,7 @@ $('#composeForm').onsubmit = e => {
   const tg = targets().filter(p => p.open);
   if (!tg.length) return toast('Belum ada perangkat yang siap menerima.', true);
   const ts = Date.now();
-  tg.forEach(p => p.dc.send(JSON.stringify({ t: 'msg', text, ts })));
+  tg.forEach(p => { try { p.send(JSON.stringify({ t: 'msg', text, ts })); } catch {} });
   addMsg({ from: S.name, text, me: true, ts, to: S.target === 'all' ? '' : tg[0].name });
   $('#msgInput').value = ''; $('#msgInput').style.height = '';
 };
