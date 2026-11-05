@@ -1,22 +1,9 @@
 # OutsiderDrop
 
 Kirim file (sampai ukuran GB) dan pesan langsung antarperangkat: Android, iPhone, Windows, Mac, Linux.
-File mengalir langsung perangkat ke perangkat (WebRTC), tidak disimpan di server.
+Murni lokal: semua perangkat di WiFi/hotspot yang sama, tanpa internet dan tanpa kuota.
 
-## Mode 1: Online (lintas jaringan, Cloudflare)
-Butuh akun Cloudflare (gratis) dan Node.js di laptop.
-
-```
-npm install -g wrangler
-wrangler login
-wrangler deploy
-```
-Hasilnya alamat seperti `https://outsiderdrop.<akun>.workers.dev`.
-Bisa dipasang ke subdomain, misalnya `drop.outsiderdev.com` (Workers > Settings > Domains & Routes).
-
-Cara pakai: buka di dua perangkat, satu pilih **Buat ruang baru**, yang lain masukkan kode atau pindai QR dari tombol **Undang**.
-
-## Mode 2: Lokal / satu jaringan (tanpa internet) — UTAMA
+## Cara pakai (satu jaringan, tanpa internet)
 Satu perangkat jadi **host**, sisanya cukup **klien lewat browser** (tanpa pasang apa pun):
 pindai QR dari host atau buka alamatnya, misal `http://192.168.43.1:8080`.
 
@@ -52,23 +39,10 @@ pkg install nodejs
 cd ~/outsiderdrop && node server-lokal.js
 ```
 
-## Server TURN (agar beda jaringan selalu tersambung)
-Tanpa TURN, sebagian kecil jaringan (seluler/kantor yang ketat) bisa gagal tersambung langsung.
-1. Dashboard Cloudflare > **Realtime** > **TURN Server** > buat TURN key.
-2. Simpan sebagai secret:
-```
-wrangler secret put TURN_KEY_ID
-wrangler secret put TURN_KEY_API_TOKEN
-```
-3. `wrangler deploy` ulang. Aplikasi otomatis memakai TURN hanya bila sambungan langsung tidak bisa.
-Kuota gratis Cloudflare TURN 1.000 GB/bulan (cek ketentuan terbaru di dashboard).
-
 ## Fitur
 - Kirim file dan **folder** (isi subfolder ikut, struktur tetap) lewat drag & drop, tombol, atau tempel.
-- **Simpan langsung ke folder** (Chrome/Edge di laptop, mode online/HTTPS atau localhost): pilih folder sekali, file masuk ditulis langsung ke disk. Ini cara paling aman untuk file GB.
 - Di perangkat lain (HP, Safari, Firefox) file masuk ditampung dulu lalu disimpan dengan tombol **Simpan**.
 
 ## Catatan
 - File sangat besar (beberapa GB) ditampung sementara oleh browser penerima sebelum disimpan; pastikan ruang penyimpanan cukup. Chrome/Edge di laptop paling lancar untuk file GB.
 - Riwayat pesan disimpan di perangkat masing-masing (bisa dihapus dengan tombol **Hapus riwayat**).
-- Jika dua perangkat beda jaringan gagal tersambung (jaringan kantor/seluler ketat), perlu server TURN (lihat saran).

@@ -205,7 +205,7 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
       <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="11" fill="var(--primary)"/><path d="M20 9v15m0 0-6-6m6 6 6-6M11 29h18" stroke="var(--primary-ink)" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <div><h1>OutsiderDrop</h1><small>Kirim file & pesan lintas perangkat</small></div>
     </div>
-    <span id="modePill" class="mode-pill">ONLINE</span>
+    <span id="modePill" class="mode-pill local">LOKAL · TANPA INTERNET</span>
     <button class="icon-btn" id="installBtn" hidden aria-label="Pasang aplikasi" title="Pasang aplikasi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg></button>
     <button class="icon-btn" id="themeBtn" aria-label="Ganti tema" title="Ganti tema"></button>
   </header>
@@ -215,7 +215,7 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
     <section>
       <span class="eyebrow">Langsung antarperangkat · tanpa batas ukuran</span>
       <h2 style="margin-top:10px">Seret file, pilih perangkat, terkirim.</h2>
-      <p class="lead">Buka halaman ini di dua perangkat atau lebih, masukkan kode ruang yang sama, lalu kirim file atau pesan. File mengalir langsung dari perangkat ke perangkat dan tidak disimpan di server.</p>
+      <p class="lead">Sambungkan semua perangkat ke WiFi atau hotspot yang sama, buka alamat dari host, lalu kirim file atau pesan. Tanpa internet dan tanpa kuota.</p>
       <div class="platforms"><span>Android</span><span>iPhone</span><span>Windows</span><span>Mac</span><span>Linux</span></div>
     </section>
     <section class="join-card">
@@ -354,28 +354,17 @@ const ICON = {
 const osIcon = os => /Android|iPhone/.test(os) ? ICON.phone : ICON.laptop;
 
 /* ---------- State ---------- */
-let CONFIG = { mode: 'online' };
+let CONFIG = { mode: 'local', room: 'LOKAL' };
 const S = { ws: null, room: null, myId: null, name: '', peers: new Map(), target: 'all', pingT: null, retry: 0, leaving: false };
-const ICE_ONLINE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
-let ICE = null;
-async function loadIce() {
-  if (CONFIG.mode === 'local') return ICE = [];
-  if (ICE) return ICE;
-  ICE = ICE_ONLINE;
-  try {
-    const r = await fetch('/turn', { cache: 'no-store' });
-    if (r.ok) { const j = await r.json(); const t = j.iceServers; if (t) ICE = ICE_ONLINE.concat(Array.isArray(t) ? t : [t]); }
-  } catch {}
-  setTimeout(() => { ICE = null; }, 6 * 3600 * 1000); // kredensial TURN diperbarui berkala
-  return ICE;
-}
+let ICE = [];
+async function loadIce() { return ICE; }
 const CHUNK = 64 * 1024;
 const FORCE_RELAY = /[?&]relay=1/.test(location.search);
 const HIGH = 4 * 1024 * 1024;
 
 $('#nameInput').value = store.get('od-name', MYOS + ' ' + rid(3));
 
-/* ---------- Mode (online / lokal) ---------- */
+/* ---------- Konfigurasi dari server lokal ---------- */
 async function loadConfig() {
   try {
     const r = await fetch('/config.json', { cache: 'no-store' });
@@ -477,7 +466,7 @@ async function onSignal(m) {
 
 /* ---------- WebRTC per perangkat ---------- */
 function makePeer(info, initiator) {
-  const pc = new RTCPeerConnection({ iceServers: ICE || (CONFIG.mode === 'local' ? [] : ICE_ONLINE) });
+  const pc = new RTCPeerConnection({ iceServers: [] });
   const dc = pc.createDataChannel('od', { negotiated: true, id: 0, ordered: true });
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
@@ -927,7 +916,7 @@ $('#clearChatBtn').onclick = async () => {
 
 /* ---------- Undang (QR + link) ---------- */
 $('#shareBtn').onclick = () => {
-  const link = CONFIG.mode === 'local' ? ((/^(localhost|127\.)/.test(location.hostname) || CONFIG.app) && CONFIG.url ? CONFIG.url : location.origin) + '/' : location.origin + '/?r=' + S.room;
+  const link = ((/^(localhost|127\.)/.test(location.hostname) || CONFIG.app || CONFIG.desk) && CONFIG.url ? CONFIG.url : location.origin) + '/';
   const root = $('#modalRoot');
   root.innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true"><h3>Undang perangkat lain</h3><p>${CONFIG.mode === 'local' ? 'Pastikan perangkat tersambung ke WiFi/hotspot yang sama, lalu pindai QR ini.' : 'Pindai QR ini, buka linknya, atau masukkan kode <b>' + S.room + '</b> di perangkat lain.'}</p><div class="qrbox" id="qr"></div><div class="linkbox"><input id="linkOut" readonly value="${esc(link)}"><button class="btn" id="copyLink">Salin</button></div><div class="row"><button class="btn primary" id="closeShare">Selesai</button></div></div></div>`;
   root.querySelector('.modal p').innerHTML = root.querySelector('.modal p').textContent.replace(S.room, '<b>' + S.room + '</b>');
@@ -961,16 +950,11 @@ window.addEventListener('beforeunload', e => { if ([...S.peers.values()].some(p 
   await loadConfig();
   setupSaveBar();
   if (!('RTCPeerConnection' in window)) { toast('Browser ini tidak mendukung kirim langsung. Gunakan Chrome, Safari, Edge, atau Firefox terbaru.', true); return; }
-  if (CONFIG.mode === 'local') {
-    // Mode lokal: tanpa kode, semua perangkat di jaringan otomatis satu ruang
-    $('#createBtn').textContent = 'Masuk ke ruang lokal';
-    $('#createBtn').onclick = () => joinRoom(CONFIG.room || 'LOKAL');
-    document.querySelector('.or').hidden = true; $('#codeInput').closest('.field').hidden = true; $('#joinBtn').hidden = true;
-    if (store.get('od-name', null) || CONFIG.app || CONFIG.desk) joinRoom(CONFIG.room || 'LOKAL');
-  } else {
-    const r = new URLSearchParams(location.search).get('r');
-    if (r && /^[A-Z0-9]{4,12}$/i.test(r)) { $('#codeInput').value = r.toUpperCase(); if (store.get('od-name', null)) joinRoom(r); }
-  }
+  // Semua perangkat di jaringan otomatis satu ruang, tanpa kode
+  $('#createBtn').textContent = 'Masuk ke ruang lokal';
+  $('#createBtn').onclick = () => joinRoom(CONFIG.room || 'LOKAL');
+  document.querySelector('.or').hidden = true; $('#codeInput').closest('.field').hidden = true; $('#joinBtn').hidden = true;
+  if (store.get('od-name', null) || CONFIG.app || CONFIG.desk) joinRoom(CONFIG.room || 'LOKAL');
 })();
 </script>
 </body>
