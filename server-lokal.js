@@ -242,9 +242,10 @@ server.on('upgrade', (req, sock) => {
     sock,
     id: crypto.randomBytes(4).toString('hex'),
     name: (url.searchParams.get('name') || 'Perangkat').slice(0, 40),
-    os: (url.searchParams.get('os') || '').slice(0, 20)
+    os: (url.searchParams.get('os') || '').slice(0, 20),
+    direct: /^http:\/\/[\d.]+:\d{2,5}$/.test(url.searchParams.get('direct') || '') ? url.searchParams.get('direct') : ''
   };
-  const info = c => ({ id: c.id, name: c.name, os: c.os });
+  const info = c => ({ id: c.id, name: c.name, os: c.os, direct: c.direct });
   sendWS(sock, JSON.stringify({ type: 'welcome', id: me.id, peers: [...room].map(info) }));
   for (const c of room) sendWS(c.sock, JSON.stringify({ type: 'join', peer: info(me) }));
   room.add(me);

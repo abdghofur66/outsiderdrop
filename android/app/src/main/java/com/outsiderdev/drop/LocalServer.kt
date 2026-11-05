@@ -128,6 +128,7 @@ class LocalServer(private val ctx: Context) {
                         .put("mode", "local").put("room", "LOKAL").put("app", true)
                         .put("signal", signal).put("url", shareUrl)
                         .put("save", loopback).put("saveDir", "Download/OutsiderDrop").put("pipe", true)
+                        .put("direct", if (signal.isNotEmpty()) lanIp()?.let { "http://$it:$port" } ?: "" else "")
                     respond(out, 200, "application/json", j.toString().toByteArray())
                 }
                 req.method == "OPTIONS" -> {
@@ -146,11 +147,16 @@ class LocalServer(private val ctx: Context) {
         var srcIn: InputStream? = null; var srcLen = -1L; var to = ""
         var dstOut: OutputStream? = null; var sink: Sink? = null
         var finished = false; var ok = false; var claimed = false
+        @Volatile var got = 0L
     }
     private val pipes = ConcurrentHashMap<String, Pipe>()
     private val pipeLock = Object()
 
     private fun handlePipe(req: Req, input: InputStream, out: OutputStream, loopback: Boolean) {
+        Regex("^/pipe/([A-Za-z0-9]{6,32})/progress$").find(req.path)?.let { pm ->
+            val g = pipes[pm.groupValues[1]]?.got ?: return respond(out, 404, "text/plain", ByteArray(0))
+            return respond(out, 200, "application/json", "{\"got\":$g}".toByteArray())
+        }
         val m = Regex("^/pipe/([A-Za-z0-9]{6,32})(/save)?$").find(req.path) ?: return respond(out, 404, "text/plain", ByteArray(0))
         val id = m.groupValues[1]
         val save = m.groupValues[2].isNotEmpty()
@@ -172,7 +178,7 @@ class LocalServer(private val ctx: Context) {
                 while (got < len) {
                     val n = input.read(buf, 0, minOf(buf.size.toLong(), len - got).toInt())
                     if (n < 0) break
-                    dst.write(buf, 0, n); got += n
+                    dst.write(buf, 0, n); got += n; pp.got = got
                     if (pp.sink != null) {
                         val now = System.currentTimeMillis()
                         if (now - lastTick > 250 || got == len) { lastTick = now; findClient(pp.to)?.send("{\"type\":\"pipe\",\"id\":\"$id\",\"got\":$got}") }
@@ -318,8 +324,8 @@ class LocalServer(private val ctx: Context) {
     }
 
     // ---------------- WebSocket signaling ----------------
-    private inner class Client(val sock: Socket, val out: OutputStream, val id: String, val name: String, val os: String) {
-        fun info(): JSONObject = JSONObject().put("id", id).put("name", name).put("os", os)
+    private inner class Client(val sock: Socket, val out: OutputStream, val id: String, val name: String, val os: String, val direct: String) {
+        fun info(): JSONObject = JSONObject().put("id", id).put("name", name).put("os", os).put("direct", direct)
         fun send(text: String) = frame(0x81, text.toByteArray(), null, 0, 0)
 
         /** Frame biner: prefix (id pengirim) + data[off until off+len], tanpa salin ulang. */
@@ -351,7 +357,8 @@ class LocalServer(private val ctx: Context) {
 
         val room = rooms.getOrPut(code) { CopyOnWriteArraySet() }
         val me = Client(sock, out, UUID.randomUUID().toString().take(8),
-            (req.query["name"] ?: "Perangkat").take(40), (req.query["os"] ?: "").take(20))
+            (req.query["name"] ?: "Perangkat").take(40), (req.query["os"] ?: "").take(20),
+            (req.query["direct"] ?: "").takeIf { Regex("^http://[0-9.]+:[0-9]{2,5}$").matches(it) } ?: "")
         val peers = JSONArray(); room.forEach { peers.put(it.info()) }
         me.send(JSONObject().put("type", "welcome").put("id", me.id).put("peers", peers).toString())
         val join = JSONObject().put("type", "join").put("peer", me.info()).toString()

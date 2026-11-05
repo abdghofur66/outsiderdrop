@@ -419,7 +419,7 @@ function setSig(state, text) { $('#sigDot').className = 'status-dot ' + state; $
 async function connectSignal() {
   await loadIce();
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${CONFIG.signal || location.host}/ws/${S.room}?name=${encodeURIComponent(S.name)}&os=${encodeURIComponent(MYOS)}`);
+  const ws = new WebSocket(`${proto}//${CONFIG.signal || location.host}/ws/${S.room}?name=${encodeURIComponent(S.name)}&os=${encodeURIComponent(MYOS)}&direct=${encodeURIComponent(CONFIG.direct || '')}`);
   ws.binaryType = 'arraybuffer';
   S.ws = ws; setSig('wait', 'Menghubungkan…');
   ws.onopen = () => { S.retry = 0; setSig('on', 'Terhubung'); clearInterval(S.pingT); S.pingT = setInterval(() => ws.readyState === 1 && ws.send('{"type":"ping"}'), 25000); };
@@ -481,7 +481,7 @@ function makePeer(info, initiator) {
   const dc = pc.createDataChannel('od', { negotiated: true, id: 0, ordered: true });
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
-  const p = { id: info.id, name: info.name, os: info.os, pc, dc, open: false, relay: false, pendingIce: [], queue: [], sending: false, incoming: null };
+  const p = { id: info.id, name: info.name, os: info.os, direct: info.direct || '', pc, dc, open: false, relay: false, pendingIce: [], queue: [], sending: false, incoming: null };
   p.send = d => p.relay ? relaySend(p.id, d) : dc.send(d);
   p.buffered = () => p.relay ? (S.ws ? S.ws.bufferedAmount : 0) : dc.bufferedAmount;
   // Mode lokal: bila sambungan langsung tidak terbuka dalam 3 detik, kirim lewat host
@@ -516,7 +516,7 @@ function renderPeers() {
   const box = $('#peers');
   if (!S.peers.size) { box.innerHTML = `<div class="empty-peers">Belum ada perangkat lain. Buka halaman ini di perangkat lain${CONFIG.mode === 'local' ? ' yang tersambung ke WiFi/hotspot yang sama' : ', lalu masukkan kode <b>' + esc(S.room || '') + '</b> atau pindai QR dari tombol Undang'}.</div>`; return; }
   const items = [{ id: 'all', name: 'Semua perangkat', sub: S.peers.size + ' perangkat', icon: ICON.all, on: true }]
-    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + (p.relay ? ' · siap' : ' · siap (langsung)') : 'menyambung…', icon: osIcon(p.os), on: p.open })));
+    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + (p.directOk || !p.relay ? ' · siap (langsung)' : ' · siap') : 'menyambung…', icon: osIcon(p.os), on: p.open })));
   box.innerHTML = items.map(i => `<button class="peer${i.on ? '' : ' off'}" data-id="${i.id}" aria-pressed="${S.target === i.id}">${i.icon}<span><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></span></button>`).join('');
   box.querySelectorAll('.peer').forEach(b => b.onclick = () => setTarget(b.dataset.id));
 }
@@ -576,13 +576,27 @@ async function pump(p) {
 
 /* ---------- Transfer cepat lewat host (HTTP) ---------- */
 const pipeBase = () => location.protocol + '//' + (CONFIG.signal || location.host);
-function sendPipe(p, job) {
+// Penerima yang memakai aplikasi (APK) punya server sendiri: kirim langsung ke sana, tanpa lewat host
+async function directBase(p) {
+  if (!p.direct) return '';
+  if (p.directOk === undefined) {
+    try {
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), 1500);
+      const r = await fetch(p.direct + '/config.json', { signal: c.signal, cache: 'no-store' });
+      clearTimeout(t); p.directOk = r.ok;
+    } catch { p.directOk = false; }
+    renderPeers();
+  }
+  return p.directOk ? p.direct : '';
+}
+async function sendPipe(p, job) {
   const { file, id, ui, path } = job;
+  const direct = await directBase(p);
   return new Promise(resolve => {
-    try { p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type, pipe: true })); }
+    try { p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type, pipe: true, direct: !!direct })); }
     catch { failTransfer(ui, 'Gagal: koneksi terputus'); return resolve(); }
     const x = new XMLHttpRequest(); job.xhr = x;
-    x.open('POST', pipeBase() + '/pipe/' + id + '?to=' + encodeURIComponent(p.id));
+    x.open('POST', (direct || pipeBase()) + '/pipe/' + id + '?to=' + encodeURIComponent(p.id));
     x.upload.onprogress = e => updTransfer(ui, e.loaded, file.size);
     x.onload = () => { x.status === 200 ? updTransfer(ui, file.size, file.size, 'Terkirim') : failTransfer(ui, x.status === 408 ? 'Gagal: penerima tidak merespons' : 'Gagal: koneksi terputus'); resolve(); };
     x.onerror = () => { failTransfer(ui, 'Gagal: koneksi terputus'); resolve(); };
@@ -594,9 +608,11 @@ const pipesIn = new Map();
 async function receivePipe(p, inc) {
   pipesIn.set(inc.id, inc);
   try {
-    if (CONFIG.save && !CONFIG.signal) {
-      // penerima = host itu sendiri: server langsung menulis ke disk, progres dikabarkan lewat sinyal
-      const r = await fetch('/pipe/' + inc.id + '/save?' + new URLSearchParams({ name: inc.name, path: inc.path || '' }), { method: 'POST' });
+    if ((CONFIG.save && !CONFIG.signal) || (inc.direct && CONFIG.save)) {
+      // penerima = host itu sendiri, atau aplikasi yang dikirimi langsung: server di perangkat ini menulis ke disk
+      let poll = null;
+      if (inc.direct) poll = setInterval(() => fetch('/pipe/' + inc.id + '/progress').then(r => r.ok ? r.json() : null).then(j => { if (j && j.got) updTransfer(inc.ui, j.got, inc.size); }).catch(() => {}), 400);
+      const r = await fetch('/pipe/' + inc.id + '/save?' + new URLSearchParams({ name: inc.name, path: inc.path || '' }), { method: 'POST' }).finally(() => poll && clearInterval(poll));
       if (!r.ok) throw new Error('gagal');
       updTransfer(inc.ui, 1, 1, 'Tersimpan'); inc.ui.querySelector('.pr').title = CONFIG.saveDir || '';
       savedActions(inc);
