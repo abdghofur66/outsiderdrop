@@ -46,6 +46,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT < 29) StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
         server = shared ?: LocalServer(applicationContext).also { it.start(); shared = it }
+        // izinkan aplikasi menerima siaran pencarian host di WiFi
+        try {
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+            wm.createMulticastLock("outsiderdrop").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Exception) { }
 
         if (Build.VERSION.SDK_INT < 29 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
@@ -87,6 +92,7 @@ class MainActivity : AppCompatActivity() {
     private fun base() = "http://127.0.0.1:${server.port}"
 
     private fun host() {
+        server.hosting = true
         server.signal = ""
         val ip = server.lanIp()
         server.shareUrl = if (ip != null) "http://$ip:${server.port}" else ""
@@ -98,6 +104,7 @@ class MainActivity : AppCompatActivity() {
         var a = raw.trim().removePrefix("http://").removePrefix("https://").substringBefore('/').substringBefore('?')
         if (a.isEmpty()) return
         if (!a.contains(':')) a += ":8080"
+        server.hosting = false
         server.signal = a
         server.shareUrl = "http://$a"
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

@@ -36,6 +36,7 @@ class LocalServer(private val ctx: Context) {
     @Volatile var port = 8080; private set
     @Volatile var signal = ""      // kosong = HP ini host; isi "ip:port" = gabung ke host lain
     @Volatile var shareUrl = ""
+    @Volatile var hosting = false
     private val CORS = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: *"
     private var server: ServerSocket? = null
     private val rooms = ConcurrentHashMap<String, CopyOnWriteArraySet<Client>>()
@@ -54,12 +55,58 @@ class LocalServer(private val ctx: Context) {
             } catch (_: Exception) { }
         }
         val s = server ?: return
+        startDiscovery()
         thread(name = "od-accept", isDaemon = true) {
             while (!s.isClosed) {
                 val sock = try { s.accept() } catch (_: Exception) { break }
                 thread(isDaemon = true) { try { handle(sock) } catch (_: Exception) { } finally { } }
             }
         }
+    }
+
+    // ---------------- Pencarian host otomatis (siaran UDP) ----------------
+    private val found = ConcurrentHashMap<String, Pair<String, Long>>() // addr -> (nama, waktu)
+
+    private fun startDiscovery() {
+        thread(name = "od-disc-rx", isDaemon = true) {
+            try {
+                val ds = java.net.DatagramSocket(null)
+                ds.reuseAddress = true; ds.broadcast = true
+                ds.bind(InetSocketAddress(45454))
+                val buf = ByteArray(2048)
+                while (true) {
+                    val pk = java.net.DatagramPacket(buf, buf.size)
+                    ds.receive(pk)
+                    try {
+                        val j = JSONObject(String(pk.data, 0, pk.length, Charsets.UTF_8))
+                        val addr = j.optString("addr")
+                        if (j.optInt("od") == 1 && Regex("^[0-9.]+:[0-9]{2,5}$").matches(addr))
+                            found[addr] = Pair(j.optString("name").take(40), System.currentTimeMillis())
+                    } catch (_: Exception) { }
+                }
+            } catch (_: Exception) { }
+        }
+        thread(name = "od-disc-tx", isDaemon = true) {
+            val ds = try { java.net.DatagramSocket().also { it.broadcast = true } } catch (_: Exception) { return@thread }
+            while (true) {
+                try {
+                    Thread.sleep(2000)
+                    val ip = lanIp()
+                    if (!hosting || ip == null) continue
+                    val msg = JSONObject().put("od", 1).put("name", Build.MODEL ?: "Android").put("addr", "$ip:$port").toString().toByteArray()
+                    val targets = mutableSetOf("255.255.255.255")
+                    for (ni in NetworkInterface.getNetworkInterfaces()) for (ia in ni.interfaceAddresses) ia.broadcast?.hostAddress?.let { targets.add(it) }
+                    for (t in targets) try { ds.send(java.net.DatagramPacket(msg, msg.size, java.net.InetAddress.getByName(t), 45454)) } catch (_: Exception) { }
+                } catch (_: Exception) { }
+            }
+        }
+    }
+
+    private fun discoveredJson(): String {
+        val now = System.currentTimeMillis(); val me = "${lanIp()}:$port"
+        val arr = JSONArray()
+        for ((addr, v) in found) if (now - v.second < 7000 && addr != me) arr.put(JSONObject().put("name", v.first).put("addr", addr))
+        return arr.toString()
     }
 
     fun lanIp(): String? {
@@ -131,6 +178,7 @@ class LocalServer(private val ctx: Context) {
                         .put("direct", if (signal.isNotEmpty()) lanIp()?.let { "http://$it:$port" } ?: "" else "")
                     respond(out, 200, "application/json", j.toString().toByteArray())
                 }
+                req.path == "/discover" -> respond(out, 200, "application/json", discoveredJson().toByteArray())
                 req.method == "OPTIONS" -> {
                     out.write("HTTP/1.1 204 No Content\r\n$CORS\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()); out.flush()
                 }

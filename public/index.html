@@ -409,7 +409,7 @@ $('#leaveBtn').onclick = async () => {
   for (const p of S.peers.values()) closePeer(p);
   S.peers.clear();
   const u = new URL(location.href); u.searchParams.delete('r'); history.replaceState(null, '', u);
-  if (CONFIG.app) { try { ODApp.leave(); } catch {} location.href = '/start.html'; return; }
+  if (CONFIG.app || CONFIG.desk) { try { window.ODApp && ODApp.leave(); } catch {} location.href = '/start.html'; return; }
   $('#roomView').hidden = true; $('#joinView').hidden = false; $('#transfers').innerHTML = ''; countTransfers();
   toast('Anda keluar dari ruang.');
 };
@@ -966,7 +966,7 @@ window.addEventListener('beforeunload', e => { if ([...S.peers.values()].some(p 
     $('#createBtn').textContent = 'Masuk ke ruang lokal';
     $('#createBtn').onclick = () => joinRoom(CONFIG.room || 'LOKAL');
     document.querySelector('.or').hidden = true; $('#codeInput').closest('.field').hidden = true; $('#joinBtn').hidden = true;
-    if (store.get('od-name', null) || CONFIG.app) joinRoom(CONFIG.room || 'LOKAL');
+    if (store.get('od-name', null) || CONFIG.app || CONFIG.desk) joinRoom(CONFIG.room || 'LOKAL');
   } else {
     const r = new URLSearchParams(location.search).get('r');
     if (r && /^[A-Z0-9]{4,12}$/i.test(r)) { $('#codeInput').value = r.toUpperCase(); if (store.get('od-name', null)) joinRoom(r); }

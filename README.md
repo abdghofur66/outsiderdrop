@@ -20,6 +20,12 @@ Cara pakai: buka di dua perangkat, satu pilih **Buat ruang baru**, yang lain mas
 Satu perangkat jadi **host**, sisanya cukup **klien lewat browser** (tanpa pasang apa pun):
 pindai QR dari host atau buka alamatnya, misal `http://192.168.43.1:8080`.
 
+### Semua kombinasi langsung (satu lompatan)
+Aplikasi laptop (exe/Mac/Linux) dan APK Android sama-sama punya pilihan **Jadi Host** atau **Gabung**.
+Host otomatis terlihat di daftar "Gabung" perangkat lain (pencarian di jaringan lokal), tanpa ketik alamat.
+Kiriman ke perangkat yang memakai aplikasi (APK / exe / Mac / Linux) langsung ke perangkat itu, tidak lewat host.
+Hanya penerima yang memakai browser biasa (mis. iPhone) yang menerima lewat host.
+
 ### Host di laptop (tanpa pasang Node.js)
 - Windows: klik dua kali `outsiderdrop.exe`. Saat Windows Firewall bertanya, pilih **Izinkan** (jaringan privat).
 - Mac: `outsiderdrop-macos-arm64` (M1/M2/M3) atau `-x64` (Intel). Pertama kali, buka Terminal:

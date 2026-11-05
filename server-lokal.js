@@ -20,10 +20,19 @@ const TYPES = {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/config.json') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    // CORS: perangkat lain mengecek alamat ini sebelum mengirim langsung
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
     const lo = isLoopback(req);
-    return res.end(JSON.stringify({ mode: 'local', room: 'LOKAL', url: MAIN_URL, save: lo, saveDir: lo ? SAVE_DIR : '', canChoose: lo, pipe: true }));
+    return res.end(JSON.stringify({
+      mode: 'local', room: 'LOKAL', pipe: true,
+      url: lo && SIGNAL ? 'http://' + SIGNAL : MAIN_URL,
+      save: lo, saveDir: lo ? SAVE_DIR : '', canChoose: lo, desk: lo,
+      signal: lo ? SIGNAL : '',                 // laptop ini sedang Gabung ke host lain
+      direct: lo && SIGNAL ? MAIN_URL : ''      // alamat laptop ini untuk menerima kiriman langsung
+    }));
   }
+  if (url.pathname === '/mode') return handleMode(req, res);
+  if (url.pathname === '/discover') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(discovered())); }
   if (url.pathname.startsWith('/pipe/')) return handlePipe(req, res, url);
   if (url.pathname.startsWith('/save/')) return handleSave(req, res, url);
   if (url.pathname === '/open') return handleOpen(req, res, url);
@@ -43,6 +52,56 @@ const server = http.createServer((req, res) => {
     res.end(data);
   });
 });
+
+// ---------- Mode laptop: Host atau Gabung ke host lain ----------
+let SIGNAL = '';      // kosong = laptop ini host; "ip:port" = gabung ke host itu
+let HOSTING = true;      // siarkan diri sebagai host sampai pengguna memilih Gabung
+function handleMode(req, res) {
+  const reply = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj || {})); };
+  if (!isLoopback(req)) return reply(403);
+  const ip = (MAIN_URL.match(/\/\/([\d.]+):/) || [])[1] || '';
+  if (req.method === 'GET') return reply(200, { ip, port, signal: SIGNAL, hosting: HOSTING });
+  let body = '';
+  req.on('data', c => { body += c; if (body.length > 2000) req.destroy(); });
+  req.on('end', () => {
+    let m; try { m = JSON.parse(body); } catch { return reply(400); }
+    if (m.mode === 'host') { SIGNAL = ''; HOSTING = true; console.log('  Mode: HOST'); }
+    else if (m.mode === 'join' && /^[\w.-]+:\d{2,5}$/.test(m.addr || '')) { SIGNAL = m.addr; HOSTING = false; console.log('  Mode: GABUNG ke ' + m.addr); }
+    else return reply(400);
+    reply(200, { ok: true });
+  });
+}
+
+// ---------- Pencarian host otomatis (siaran UDP di jaringan lokal) ----------
+const dgram = require('dgram');
+const DISC_PORT = 45454;
+const found = new Map(); // addr -> { name, addr, ts }
+function discovered() {
+  const now = Date.now(), me = MAIN_URL.replace('http://', '');
+  return [...found.values()].filter(h => now - h.ts < 7000 && h.addr !== me).map(h => ({ name: h.name, addr: h.addr }));
+}
+try {
+  const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  sock.on('error', () => {});
+  sock.on('message', buf => {
+    try { const m = JSON.parse(buf.toString()); if (m.od === 1 && /^[\d.]+:\d{2,5}$/.test(m.addr)) found.set(m.addr, { name: String(m.name).slice(0, 40), addr: m.addr, ts: Date.now() }); } catch {}
+  });
+  sock.bind(DISC_PORT, () => {
+    sock.setBroadcast(true);
+    setInterval(() => {
+      if (!HOSTING || !MAIN_URL) return;
+      const msg = Buffer.from(JSON.stringify({ od: 1, name: os.hostname(), addr: MAIN_URL.replace('http://', '') }));
+      const targets = new Set(['255.255.255.255']);
+      for (const i of Object.values(os.networkInterfaces()).flat()) {
+        if (i && i.family === 'IPv4' && !i.internal && i.netmask) {
+          const a = i.address.split('.').map(Number), m = i.netmask.split('.').map(Number);
+          targets.add(a.map((x, k) => (x & m[k]) | (~m[k] & 255)).join('.'));
+        }
+      }
+      for (const t of targets) sock.send(msg, DISC_PORT, t, () => {});
+    }, 2000);
+  });
+} catch {}
 
 // ---------- Minimal WebSocket (text frames saja, cukup untuk signaling) ----------
 let MAIN_URL = '';
@@ -332,13 +391,14 @@ server.on('listening', () => {
     .filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
   const main = ips.length ? `http://${pickIP(ips)}:${port}` : `http://localhost:${port}`;
   MAIN_URL = main;
-  console.log('\n  OutsiderDrop - Mode Lokal aktif (tanpa internet)\n');
-  console.log('  Pindai QR ini dari HP/laptop lain di WiFi/hotspot yang sama:\n');
+  console.log('\n  OutsiderDrop - Mode Lokal aktif (tanpa internet)');
+  console.log('  Pilih "Jadi Host" atau "Gabung" di browser yang terbuka.\n');
+  console.log('  Bila laptop ini jadi host, pindai QR ini dari HP/laptop lain di WiFi/hotspot yang sama:\n');
   try { require('qrcode-terminal').generate(main, { small: true }, q => console.log(q.replace(/^/gm, '  '))); } catch {}
   console.log('  Atau buka alamat:');
   (ips.length ? ips : ['127.0.0.1']).forEach(ip => console.log(`    http://${ip}:${port}`));
   console.log('\n  File masuk disimpan ke: ' + SAVE_DIR);
   console.log('\n  Biarkan jendela ini terbuka selama dipakai. Tutup untuk berhenti.\n');
-  openBrowser(`http://localhost:${port}`);
+  openBrowser(`http://localhost:${port}/start.html`);
 });
 server.listen(port, '0.0.0.0');

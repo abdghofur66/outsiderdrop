@@ -10,6 +10,7 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e161c;--surface:#16222b;--surface-2:#1d2c37;--text:#e4edf2;--muted:#8fa3b1;--border:#2a3c48;--primary:#3cc3b9;--primary-ink:#06201e;--signal:#f0b65a;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#0e161c;--surface:#16222b;--surface-2:#1d2c37;--text:#e4edf2;--muted:#8fa3b1;--border:#2a3c48;--primary:#3cc3b9;--primary-ink:#06201e;--signal:#f0b65a;color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--body);min-height:100vh;display:flex;flex-direction:column;
   padding:max(20px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
 main{flex:1;width:100%;max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
@@ -27,6 +28,11 @@ h1{font:800 22px var(--display);margin:0}
 .row input{flex:1;min-width:0;min-height:48px;border:1px solid var(--border);border-radius:12px;background:var(--bg);padding:0 14px;font:500 16px var(--mono);color:var(--text)}
 .ipline{font:600 13px var(--mono);background:var(--surface-2);border-radius:8px;padding:8px 10px;color:var(--text)}
 .tip{border-left:3px solid var(--signal);padding-left:10px}
+.found{display:flex;flex-direction:column;gap:8px}
+.found button{display:flex;align-items:center;gap:10px;text-align:left;min-height:52px;padding:8px 14px;border-radius:12px;border:1.5px solid var(--primary);background:color-mix(in srgb,var(--primary) 8%,var(--surface));color:var(--text);cursor:pointer;font:inherit}
+.found button b{display:block;font-size:15px}
+.found button small{color:var(--muted);font:500 12px var(--mono)}
+.found .dot{width:9px;height:9px;border-radius:50%;background:#2e8b57;flex:none}
 .recent{display:flex;flex-wrap:wrap;gap:6px}
 .recent button{font:500 13px var(--mono);border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;padding:6px 10px}
 .app-footer{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:20px 0 calc(16px + env(safe-area-inset-bottom,0px))}
@@ -44,15 +50,16 @@ h1{font:800 22px var(--display);margin:0}
 
   <section class="card">
     <h2>Jadi Host</h2>
-    <p>HP ini membuka ruang. Perangkat lain yang tersambung ke WiFi atau hotspot yang sama tinggal memindai QR.</p>
-    <p class="tip">Tanpa WiFi? Nyalakan <b>Hotspot</b> di HP ini dulu. Paket data boleh mati.</p>
+    <p>Perangkat ini membuka ruang. Perangkat lain di WiFi atau hotspot yang sama akan menemukannya otomatis, atau tinggal pindai QR.</p>
+    <p class="tip" id="hotspotTip">Tanpa WiFi? Nyalakan <b>Hotspot</b> di HP ini dulu. Paket data boleh mati.</p>
     <div class="ipline" id="ipLine">Mendeteksi jaringan…</div>
     <button class="btn primary" id="hostBtn">Mulai sebagai Host</button>
   </section>
 
   <section class="card">
     <h2>Gabung ke Host</h2>
-    <p>Pindai QR yang tampil di host, atau ketik alamatnya.</p>
+    <div class="found" id="found"><p id="foundHint">Mencari host di jaringan ini…</p></div>
+    <p>Atau pindai QR yang tampil di host / ketik alamatnya.</p>
     <button class="btn" id="scanBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg>Pindai QR</button>
     <div class="row"><input id="addr" placeholder="192.168.43.1:8080" inputmode="url" autocomplete="off" aria-label="Alamat host"><button class="btn" id="joinBtn" style="padding:0 18px">Gabung</button></div>
     <div class="recent" id="recent"></div>
@@ -69,21 +76,47 @@ h1{font:800 22px var(--display);margin:0}
 (function(){try{var t=localStorage.getItem('od-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 const app = window.ODApp;
 const $ = s => document.querySelector(s);
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function recent(){ try { return JSON.parse(localStorage.getItem('od-hosts')||'[]'); } catch { return []; } }
 function remember(a){ const r=[a].concat(recent().filter(x=>x!==a)).slice(0,4); try{localStorage.setItem('od-hosts',JSON.stringify(r));}catch{} }
-function join(a){ a=a.trim(); if(!a) return; remember(a); app && app.join(a); }
-function paintIp(){
-  try { const i = JSON.parse(app.info()); $('#ipLine').textContent = i.ip ? 'Alamat host: ' + i.ip + ':' + i.port : 'Belum tersambung ke WiFi/hotspot. Nyalakan hotspot atau sambung ke WiFi.'; }
-  catch { $('#ipLine').textContent = 'Buka halaman ini dari aplikasi OutsiderDrop.'; }
+async function setMode(body) {
+  // versi laptop (exe / Mac / Linux): atur mode lewat server di perangkat ini
+  const r = await fetch('/mode', { method: 'POST', body: JSON.stringify(body) });
+  if (!r.ok) throw new Error('mode');
+  location.href = '/';
 }
-$('#hostBtn').onclick = () => app && app.host();
+function join(a){
+  a = a.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''); if (!a) return;
+  if (!a.includes(':')) a += ':8080';
+  remember(a);
+  if (app) app.join(a); else setMode({ mode: 'join', addr: a }).catch(() => alertLine('Tidak bisa gabung. Pastikan alamatnya benar.'));
+}
+function alertLine(t){ $('#foundHint').textContent = t; }
+async function paintIp(){
+  try {
+    const i = app ? JSON.parse(app.info()) : await fetch('/mode').then(r => r.json());
+    $('#ipLine').textContent = i.ip ? 'Alamat host: ' + i.ip + ':' + i.port : 'Belum tersambung ke WiFi/hotspot. Nyalakan hotspot atau sambung ke WiFi.';
+  } catch { $('#ipLine').textContent = 'Buka halaman ini dari aplikasi OutsiderDrop.'; }
+}
+async function discover(){
+  try {
+    const list = await fetch('/discover', { cache: 'no-store' }).then(r => r.json());
+    const box = $('#found');
+    if (!list.length) { box.innerHTML = '<p id="foundHint">Belum ada host terdeteksi. Pastikan host sudah dibuka dan satu jaringan.</p>'; return; }
+    box.innerHTML = list.map(h => `<button data-a="${esc(h.addr)}"><span class="dot"></span><span><b>${esc(h.name)}</b><small>${esc(h.addr)}</small></span></button>`).join('');
+  } catch {}
+}
+$('#found').onclick = e => { const b = e.target.closest('button'); if (b) join(b.dataset.a); };
+$('#hostBtn').onclick = () => app ? app.host() : setMode({ mode: 'host' }).catch(() => {});
+if (!app) { $('#scanBtn').hidden = true; $('#hotspotTip').innerHTML = 'Tanpa WiFi? Nyalakan <b>Mobile Hotspot</b> di laptop ini, atau sambungkan semua perangkat ke hotspot salah satu HP.'; }
 $('#scanBtn').onclick = () => app && app.scan();
 $('#joinBtn').onclick = () => join($('#addr').value);
 $('#addr').addEventListener('keydown', e => { if (e.key === 'Enter') join($('#addr').value); });
 const r = recent();
-$('#recent').innerHTML = r.map(a => `<button data-a="${a.replace(/"/g,'')}">${a.replace(/[<>&]/g,'')}</button>`).join('');
+$('#recent').innerHTML = r.map(a => `<button data-a="${esc(a)}">${esc(a)}</button>`).join('');
 $('#recent').onclick = e => { if (e.target.dataset.a) join(e.target.dataset.a); };
 paintIp(); setInterval(paintIp, 4000);
+discover(); setInterval(discover, 2000);
 </script>
 </body>
 </html>
