@@ -119,7 +119,23 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
 .bar i{display:block;height:100%;width:0;background:var(--primary);transition:width .2s}
 .tf.done .bar i{background:var(--ok)}
 .tf.fail .bar i{background:var(--danger)}
-.tf .act{display:flex;gap:6px}
+.tf .act{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.tf.in .ic{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--primary)}
+.tf.out .ic{background:color-mix(in srgb,var(--signal) 22%,transparent);color:color-mix(in srgb,var(--signal) 70%,var(--text))}
+.tf .ic svg{width:20px;height:20px}
+.tf .ic b{font:700 8px var(--mono);letter-spacing:.04em;margin-top:-2px}
+.tf .ic{flex-direction:column;gap:0}
+.dir{font:700 10px var(--mono);letter-spacing:.08em;padding:1px 6px;border-radius:4px;margin-right:4px}
+.tf.in .dir{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--primary)}
+.tf.out .dir{background:color-mix(in srgb,var(--signal) 22%,transparent);color:color-mix(in srgb,var(--signal) 60%,var(--text))}
+.tf .act button.go{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+.tfhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px;flex-wrap:wrap}
+.tabs{display:flex;gap:4px;background:var(--surface-2);padding:3px;border-radius:10px}
+.tabs button{border:0;background:transparent;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--muted);min-height:34px}
+.tabs button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.transfers[data-f="in"] .tf.out,.transfers[data-f="out"] .tf.in{display:none}
+.tf-empty{color:var(--muted);font-size:14px;text-align:center;padding:10px}
+@media (max-width:520px){.tf{grid-template-columns:auto minmax(0,1fr)}.tf .act{grid-column:1/-1}.tf .act:empty{display:none}}
 .tf .act a,.tf .act button{min-height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;text-decoration:none;color:var(--text);display:inline-flex;align-items:center}
 .tf .act a{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
 
@@ -230,7 +246,15 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
         <button class="btn" id="saveDirBtn">Pilih folder</button>
         <button class="btn" id="saveDirReset" hidden>Batalkan</button>
       </div>
-      <div class="transfers" id="transfers"></div>
+      <div class="tfhead" id="tfHead" hidden>
+        <h3>Riwayat transfer</h3>
+        <div class="tabs" role="group" aria-label="Saring arah transfer">
+          <button data-f="all" aria-pressed="true">Semua</button>
+          <button data-f="in" aria-pressed="false">↓ Masuk <span id="cntIn">0</span></button>
+          <button data-f="out" aria-pressed="false">↑ Keluar <span id="cntOut">0</span></button>
+        </div>
+      </div>
+      <div class="transfers" id="transfers" data-f="all"></div>
     </section>
 
     <section class="panel chat">
@@ -372,7 +396,7 @@ $('#leaveBtn').onclick = async () => {
   S.peers.clear();
   const u = new URL(location.href); u.searchParams.delete('r'); history.replaceState(null, '', u);
   if (CONFIG.app) { try { ODApp.leave(); } catch {} location.href = '/start.html'; return; }
-  $('#roomView').hidden = true; $('#joinView').hidden = false; $('#transfers').innerHTML = '';
+  $('#roomView').hidden = true; $('#joinView').hidden = false; $('#transfers').innerHTML = ''; countTransfers();
   toast('Anda keluar dari ruang.');
 };
 
@@ -556,10 +580,10 @@ function onData(p, data) {
     const inc = p.incoming; p.incoming = null;
     if (inc.app) {
       appFlush(inc);
-      inc.chain.then(() => appSave('close', inc, null)).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan di ' + (CONFIG.saveDir || 'Download/OutsiderDrop')); toast('Tersimpan: ' + inc.name); })
+      inc.chain.then(() => appSave('close', inc, null)).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan'); inc.ui.querySelector('.pr').title = CONFIG.saveDir || 'Download/OutsiderDrop'; savedActions(inc); toast('Tersimpan: ' + inc.name); })
         .catch(() => failTransfer(inc.ui, 'Gagal menyimpan'));
     } else if (inc.disk) {
-      inc.chain.then(() => inc.w.close()).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan di folder'); toast('Tersimpan: ' + inc.name); })
+      inc.chain.then(() => inc.w.close()).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan di folder ' + S.dir.name); actBtn(inc.ui, 'Buka file', async () => openBlob(await inc.fh.getFile()), true); toast('Tersimpan: ' + inc.name); })
         .catch(err => { console.warn(err); failTransfer(inc.ui, 'Gagal menyimpan ke folder'); });
     } else {
       const blob = new Blob(inc.blobs.concat(inc.parts.length ? [new Blob(inc.parts)] : []), { type: inc.mime || 'application/octet-stream' });
@@ -590,12 +614,44 @@ function appFlush(inc) {
 /* ---------- UI transfer ---------- */
 function addTransfer({ name, path, size, dir, peer }) {
   const el = document.createElement('div');
-  el.className = 'tf';
-  const ext = (name.split('.').pop() || 'file').slice(0, 4).toUpperCase();
-  el.innerHTML = `<div class="ic">${esc(ext)}</div><div style="min-width:0"><div class="nm" title="${esc(name)}">${esc(name)}</div>${path ? `<div class="path">${esc(path)}/</div>` : ''}<div class="meta"><span class="st">${dir === 'out' ? 'Ke ' : 'Dari '}${esc(peer)}</span> · <span class="pr">0%</span> · ${fmtSize(size)}</div><div class="bar"><i></i></div></div><div class="act"></div>`;
+  el.className = 'tf ' + dir;
+  const ext = name.includes('.') ? name.split('.').pop().slice(0, 4).toUpperCase() : 'FILE';
+  const arrow = dir === 'in'
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13m0 0-5-5m5 5 5-5"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V7m0 0-5 5m5-5 5 5"/></svg>';
+  el.innerHTML = `<div class="ic" title="${dir === 'in' ? 'File masuk' : 'File keluar'}">${arrow}<b>${esc(ext)}</b></div><div style="min-width:0"><div class="nm" title="${esc(name)}">${esc(name)}</div>${path ? `<div class="path">${esc(path)}/</div>` : ''}<div class="meta"><span class="dir">${dir === 'in' ? 'MASUK' : 'KELUAR'}</span><span class="st">${dir === 'out' ? 'ke ' : 'dari '}${esc(peer)}</span> · <span class="pr">0%</span> · ${fmtSize(size)}</div><div class="bar"><i></i></div></div><div class="act"></div>`;
   if (dir === 'out') { const b = document.createElement('button'); b.textContent = 'Batal'; b.onclick = () => { for (const p of S.peers.values()) { const j = p.queue.find(q => q.ui === el); if (j) { p.queue.splice(p.queue.indexOf(j), 1); failTransfer(el, 'Dibatalkan'); } } el._job && (el._job.cancel = true); }; el.querySelector('.act').append(b); }
   $('#transfers').prepend(el);
+  countTransfers();
   return el;
+}
+function countTransfers() {
+  $('#cntIn').textContent = document.querySelectorAll('#transfers .tf.in').length;
+  $('#cntOut').textContent = document.querySelectorAll('#transfers .tf.out').length;
+  $('#tfHead').hidden = !document.querySelector('#transfers .tf');
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  $('#transfers').dataset.f = b.dataset.f;
+});
+function actBtn(el, text, fn, primary) {
+  const b = document.createElement('button'); b.textContent = text; if (primary) b.className = 'go';
+  b.onclick = async () => { try { await fn(); } catch { toast('Tidak bisa membuka. File tetap tersimpan.', true); } };
+  el.querySelector('.act').append(b);
+}
+function openBlob(blob) {
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if (!w) location.href = url;
+}
+// File yang ditulis server (laptop host / aplikasi Android)
+function openSaved(id, what) {
+  if (CONFIG.app && window.ODApp) { what === 'file' ? ODApp.openFile(id) : ODApp.openFolder(id); return; }
+  return fetch('/open?' + new URLSearchParams({ id, what }), { method: 'POST' }).then(r => { if (!r.ok) throw 0; });
+}
+function savedActions(inc) {
+  actBtn(inc.ui, 'Buka file', () => openSaved(inc.id, 'file'), true);
+  actBtn(inc.ui, 'Buka folder', () => openSaved(inc.id, 'folder'));
 }
 function updTransfer(el, got, size, label) {
   const pct = size ? Math.round(got / size * 100) : 100;
@@ -606,6 +662,7 @@ function updTransfer(el, got, size, label) {
 function failTransfer(el, text) { el.classList.add('fail'); el.querySelector('.pr').textContent = text; el.querySelector('.act').innerHTML = ''; }
 function finishIncoming(el, blob, name) {
   updTransfer(el, 1, 1, 'Selesai');
+  actBtn(el, 'Buka', () => openBlob(blob));
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = name; a.textContent = 'Simpan';
   el.querySelector('.act').append(a);
@@ -657,6 +714,8 @@ async function openDiskFile(path, name) {
     try { await dir.getFileHandle(nm); } catch { return dir.getFileHandle(nm, { create: true }); }
   }
 }
+function setupSaveBar() {
+if (CONFIG.save) return; // laptop host / aplikasi Android: sudah otomatis tersimpan ke folder unduhan
 if ('showDirectoryPicker' in window && isSecureContext) {
   $('#saveBar').hidden = false;
   $('#saveDirBtn').onclick = async () => {
@@ -668,6 +727,7 @@ if ('showDirectoryPicker' in window && isSecureContext) {
     } catch (err) { if (err.name !== 'AbortError') toast('Folder tidak bisa dipakai. Pilih folder lain.', true); }
   };
   $('#saveDirReset').onclick = () => { S.dir = null; $('#saveDirText').textContent = 'Unduhan (tekan Simpan per file)'; $('#saveDirBtn').textContent = 'Pilih folder'; $('#saveDirReset').hidden = true; };
+}
 }
 // tempel gambar/file dari clipboard
 document.addEventListener('paste', e => { if ($('#roomView').hidden) return; const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); sendFiles(fs); } });
@@ -741,6 +801,7 @@ window.addEventListener('beforeunload', e => { if ([...S.peers.values()].some(p 
 /* ---------- Mulai ---------- */
 (async () => {
   await loadConfig();
+  setupSaveBar();
   if (!('RTCPeerConnection' in window)) { toast('Browser ini tidak mendukung kirim langsung. Gunakan Chrome, Safari, Edge, atau Firefox terbaru.', true); return; }
   if (CONFIG.mode === 'local') {
     // Mode lokal: tanpa kode, semua perangkat di jaringan otomatis satu ruang

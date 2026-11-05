@@ -25,6 +25,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ mode: 'local', room: 'LOKAL', url: MAIN_URL, save: lo, saveDir: lo ? SAVE_DIR : '' }));
   }
   if (url.pathname.startsWith('/save/')) return handleSave(req, res, url);
+  if (url.pathname === '/open') return handleOpen(req, res, url);
   let p = decodeURIComponent(url.pathname);
   if (p.endsWith('/')) p += 'index.html';
   const file = path.normalize(path.join(ROOT, p));
@@ -47,8 +48,29 @@ let MAIN_URL = '';
 // ---------- Simpan langsung ke disk laptop host (hanya untuk browser di laptop host) ----------
 const SAVE_DIR = process.env.SAVE_DIR || path.join(os.homedir(), 'Downloads', 'OutsiderDrop');
 const saves = new Map();
+const savedFiles = new Map(); // id -> path file yang sudah selesai
 const isLoopback = req => /^(::1|127\.|::ffff:127\.)/.test(req.socket.remoteAddress || '');
 const clean = s => String(s || '').replace(/[\\:*?"<>|]/g, '_').split('/').filter(x => x && x !== '.' && x !== '..').join(path.sep);
+// Buka file / folder hasil terima di laptop host (hanya dari browser di laptop ini)
+function handleOpen(req, res, url) {
+  const done = code => { res.writeHead(code); res.end(); };
+  if (req.method !== 'POST' || !isLoopback(req)) return done(403);
+  req.resume();
+  const file = savedFiles.get(url.searchParams.get('id'));
+  if (!file || !fs.existsSync(file)) return done(404);
+  const { execFile } = require('child_process');
+  const folder = url.searchParams.get('what') === 'folder';
+  if (process.platform === 'win32') {
+    if (folder) execFile('explorer.exe', ['/select,', file], () => {});
+    else execFile('explorer.exe', [file], () => {});
+  } else if (process.platform === 'darwin') {
+    execFile('open', folder ? ['-R', file] : [file], () => {});
+  } else {
+    execFile('xdg-open', [folder ? path.dirname(file) : file], () => {});
+  }
+  done(200);
+}
+
 function handleSave(req, res, url) {
   const done = (code, msg) => { res.writeHead(code, { 'Content-Type': 'text/plain' }); res.end(msg || ''); };
   if (req.method !== 'POST' || !isLoopback(req)) return done(403);
@@ -71,6 +93,7 @@ function handleSave(req, res, url) {
   req.resume();
   fs.closeSync(sv.fd); saves.delete(id);
   if (op === 'abort') try { fs.unlinkSync(sv.file); } catch {}
+  else savedFiles.set(id, sv.file);
   done(200);
 }
 const rooms = new Map(); // code -> Set(client)

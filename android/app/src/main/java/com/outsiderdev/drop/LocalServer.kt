@@ -39,6 +39,8 @@ class LocalServer(private val ctx: Context) {
     private var server: ServerSocket? = null
     private val rooms = ConcurrentHashMap<String, CopyOnWriteArraySet<Client>>()
     private val saves = ConcurrentHashMap<String, Sink>()
+    /** id -> (uri MediaStore atau file) untuk tombol Buka file / Buka folder */
+    val saved = ConcurrentHashMap<String, Pair<Uri?, File?>>()
 
     fun start() {
         if (server != null) return
@@ -181,9 +183,12 @@ class LocalServer(private val ctx: Context) {
                 if (op == "abort") {
                     sink.uri?.let { ctx.contentResolver.delete(it, null, null) }
                     sink.file?.delete()
-                } else if (sink.uri != null && Build.VERSION.SDK_INT >= 29) {
-                    val v = ContentValues(); v.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    ctx.contentResolver.update(sink.uri, v, null, null)
+                } else {
+                    if (sink.uri != null && Build.VERSION.SDK_INT >= 29) {
+                        val v = ContentValues(); v.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        ctx.contentResolver.update(sink.uri, v, null, null)
+                    }
+                    saved[id] = Pair(sink.uri, sink.file)
                 }
             }
             else -> return respond(out, 404, "text/plain", ByteArray(0))

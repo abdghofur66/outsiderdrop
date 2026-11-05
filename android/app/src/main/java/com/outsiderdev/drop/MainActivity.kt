@@ -1,6 +1,11 @@
 package com.outsiderdev.drop
 
 import android.Manifest
+import android.app.DownloadManager
+import android.content.Intent
+import android.os.StrictMode
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -39,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT < 29) StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
         server = shared ?: LocalServer(applicationContext).also { it.start(); shared = it }
 
         if (Build.VERSION.SDK_INT < 29 &&
@@ -98,6 +104,32 @@ class MainActivity : AppCompatActivity() {
         web.loadUrl(base() + "/")
     }
 
+    private fun openFile(id: String) {
+        val (uri, file) = server.saved[id] ?: return toast("File tidak ditemukan")
+        val target = uri ?: file?.let { Uri.fromFile(it) } ?: return
+        val type = contentResolver.getType(target)
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(MimeTypeMap.getFileExtensionFromUrl(target.toString()).lowercase())
+            ?: "*/*"
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(target, type)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { startActivity(i) } catch (_: Exception) { toast("Tidak ada aplikasi untuk membuka file ini") }
+    }
+
+    private fun openFolder() {
+        // Buka folder Download/OutsiderDrop di aplikasi File; bila tidak didukung, buka daftar Unduhan
+        val doc = Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2FOutsiderDrop")
+        val tries = listOf(
+            Intent(Intent.ACTION_VIEW).setDataAndType(doc, "vnd.android.document/directory"),
+            Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)
+        )
+        for (i in tries) {
+            try { startActivity(i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) { }
+        }
+        toast("Buka aplikasi File, lalu masuk ke Download/OutsiderDrop")
+    }
+
+    private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
+
     inner class Bridge {
         @JavascriptInterface fun host() = runOnUiThread { this@MainActivity.host() }
         @JavascriptInterface fun join(addr: String) = runOnUiThread { this@MainActivity.join(addr) }
@@ -107,6 +139,8 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun leave() = runOnUiThread {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+        @JavascriptInterface fun openFile(id: String) = runOnUiThread { this@MainActivity.openFile(id) }
+        @JavascriptInterface fun openFolder(id: String) = runOnUiThread { this@MainActivity.openFolder() }
         @JavascriptInterface fun info(): String =
             JSONObject().put("ip", server.lanIp() ?: "").put("port", server.port).toString()
     }
