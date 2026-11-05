@@ -62,11 +62,14 @@ jobs:
       - name: Build aplikasi Mac (.app)
         run: |
           npm ci
-          for i in 1 2 3; do
-            npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist \
-              -t node22-macos-arm64,node22-macos-x64 && break
-            echo "Percobaan $i gagal, ulangi..."; sleep 20
+          for t in arm64 x64; do
+            for i in 1 2 3; do
+              npx pkg . --no-bytecode --public-packages "*" --public --compress GZip \
+                -t node22-macos-$t -o dist/outsiderdrop-macos-$t && break
+              echo "Percobaan $i gagal, ulangi..."; sleep 20
+            done
           done
+          ls -la dist
           V=1.0.${{ github.run_number }}
           mac/build-app.sh dist/outsiderdrop-macos-arm64 OutsiderDrop-Mac-AppleSilicon.zip $V
           mac/build-app.sh dist/outsiderdrop-macos-x64 OutsiderDrop-Mac-Intel.zip $V
