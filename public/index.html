@@ -7,8 +7,8 @@
 <meta name="description" content="Kirim file dan pesan antar HP, laptop, Android, iPhone, Mac, Windows, langsung tanpa batas ukuran.">
 <meta name="theme-color" content="#f3f6f8">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="icon" href="/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
 <script>
@@ -931,7 +931,7 @@ function maybeShowNotifBanner() { $('#notifBanner').hidden = !('Notification' in
 $('#notifBtn').onclick = async () => { try { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notifikasi aktif.' : 'Notifikasi tidak diizinkan.', r !== 'granted'); } catch {} maybeShowNotifBanner(); };
 function notify(title, body) {
   if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
-  navigator.serviceWorker?.ready.then(reg => reg.showNotification(title, { body, icon: '/icon.svg', tag: 'od' })).catch(() => { try { new Notification(title, { body }); } catch {} });
+  navigator.serviceWorker?.ready.then(reg => reg.showNotification(title, { body, icon: '/icon-192.png', tag: 'od' })).catch(() => { try { new Notification(title, { body }); } catch {} });
 }
 
 /* ---------- PWA ---------- */

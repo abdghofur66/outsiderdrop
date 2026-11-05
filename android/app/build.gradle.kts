@@ -10,8 +10,8 @@ android {
         applicationId = "com.outsiderdev.drop"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0"
     }
     // tampilan web yang sama dengan versi browser (folder public di akar proyek)
     sourceSets["main"].assets.srcDirs("src/main/assets", "../../public")

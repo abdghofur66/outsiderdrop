@@ -14,7 +14,12 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
-      - run: gradle -p android assembleRelease --no-daemon
+      - name: Buat ikon dengan logo OutsiderDev
+        run: |
+          curl -fsSL --retry 3 https://outsiderdev.com/img/ico.png -o /tmp/logo.png || echo "Logo tidak terunduh, ikon dibuat tanpa lencana"
+          pip install --quiet pillow
+          python3 scripts/make_icons.py /tmp/logo.png
+      - run: gradle -p android assembleRelease --no-daemon -PversionName=1.0.${{ github.run_number }} -PversionCode=${{ github.run_number }}
       - run: mv android/app/build/outputs/apk/release/app-release.apk OutsiderDrop.apk
       - uses: actions/upload-artifact@v4
         with: { name: OutsiderDrop-apk, path: OutsiderDrop.apk }
@@ -23,6 +28,7 @@ jobs:
       - name: Build host laptop (dengan percobaan ulang)
         run: |
           npm ci
+          APP_VERSION=1.0.${{ github.run_number }} node scripts/icon-exe.js
           for i in 1 2 3; do
             npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist && exit 0
             echo "Percobaan $i gagal, ulangi..."; sleep 20
