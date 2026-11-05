@@ -15,8 +15,8 @@ Hanya penerima yang memakai browser biasa (mis. iPhone) yang menerima lewat host
 
 ### Host di laptop (tanpa pasang Node.js)
 - Windows: klik dua kali `outsiderdrop.exe`. Saat Windows Firewall bertanya, pilih **Izinkan** (jaringan privat).
-- Mac: `outsiderdrop-macos-arm64` (M1/M2/M3) atau `-x64` (Intel). Pertama kali, buka Terminal:
-  `chmod +x outsiderdrop-macos-arm64 && codesign --sign - outsiderdrop-macos-arm64 && ./outsiderdrop-macos-arm64`
+- Mac: unduh `OutsiderDrop-Mac-AppleSilicon.zip` (M1/M2/M3/M4) atau `OutsiderDrop-Mac-Intel.zip`, ekstrak, pindahkan **OutsiderDrop** ke Applications.
+  Pertama kali: klik kanan > **Open** > **Open** (atau System Settings > Privacy & Security > **Open Anyway**), karena aplikasi belum dinotarisasi Apple.
 - Linux: `chmod +x outsiderdrop-linux-x64 && ./outsiderdrop-linux-x64`
 
 Jendela akan menampilkan QR + alamat, dan browser host terbuka otomatis.

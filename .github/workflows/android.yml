@@ -25,12 +25,13 @@ jobs:
         with: { name: OutsiderDrop-apk, path: OutsiderDrop.apk }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
-      - name: Build host laptop (dengan percobaan ulang)
+      - name: Build host Windows & Linux (dengan percobaan ulang)
         run: |
           npm ci
           APP_VERSION=1.0.${{ github.run_number }} node scripts/icon-exe.js
           for i in 1 2 3; do
-            npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist && exit 0
+            npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist \
+              -t node22-win-x64,node22-linux-x64,node22-linux-arm64 && exit 0
             echo "Percobaan $i gagal, ulangi..."; sleep 20
           done
           exit 1
@@ -43,3 +44,36 @@ jobs:
           files: |
             OutsiderDrop.apk
             dist/*
+
+  mac:
+    needs: build
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Buat ikon dengan logo OutsiderDev
+        run: |
+          curl -fsSL --retry 3 https://outsiderdev.com/img/ico.png -o /tmp/logo.png || echo "Logo tidak terunduh"
+          python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
+          python3 scripts/make_icons.py /tmp/logo.png
+      - name: Build aplikasi Mac (.app)
+        run: |
+          npm ci
+          for i in 1 2 3; do
+            npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist \
+              -t node22-macos-arm64,node22-macos-x64 && break
+            echo "Percobaan $i gagal, ulangi..."; sleep 20
+          done
+          V=1.0.${{ github.run_number }}
+          mac/build-app.sh dist/outsiderdrop-macos-arm64 OutsiderDrop-Mac-AppleSilicon.zip $V
+          mac/build-app.sh dist/outsiderdrop-macos-x64 OutsiderDrop-Mac-Intel.zip $V
+      - name: Tambahkan ke rilis
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          files: |
+            OutsiderDrop-Mac-AppleSilicon.zip
+            OutsiderDrop-Mac-Intel.zip

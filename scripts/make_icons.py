@@ -4,7 +4,7 @@
 Pemakaian: python3 scripts/make_icons.py [logo.png]
 Tanpa logo (mis. offline), ikon dibuat tanpa lencana.
 Hasil: public/icon-192.png, public/icon-512.png, public/favicon.png,
-       build/icon.ico (exe Windows), ikon peluncur Android (mipmap-*).
+       build/icon.ico (exe Windows), build/icon.icns (Mac), ikon peluncur Android (mipmap-*).
 """
 import os
 import sys
@@ -98,6 +98,9 @@ def main():
     os.makedirs(os.path.join(ROOT, 'build'), exist_ok=True)
     big = full_icon(256, logo)
     big.save(os.path.join(ROOT, 'build', 'icon.ico'), sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+
+    # ikon aplikasi Mac (.app)
+    full_icon(1024, logo).save(os.path.join(ROOT, 'build', 'icon.icns'), format='ICNS')
 
     res = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
     for dpi, base in [('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)]:
