@@ -129,6 +129,16 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
 .tf.in .dir{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--primary)}
 .tf.out .dir{background:color-mix(in srgb,var(--signal) 22%,transparent);color:color-mix(in srgb,var(--signal) 60%,var(--text))}
 .tf .act button.go{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+.tf{position:relative}
+.tf .rm{position:absolute;top:6px;right:6px;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--muted);display:none;place-items:center;cursor:pointer}
+.tf.done .rm,.tf.fail .rm{display:grid}
+.tf .rm:hover{background:var(--surface-2);color:var(--danger)}
+.tf .rm svg{width:14px;height:14px}
+.tf.done>div:nth-child(2),.tf.fail>div:nth-child(2){padding-right:22px}
+.tf.fail .pr{color:var(--danger);font-weight:600}
+.tfclear{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;justify-content:flex-end}
+.tfclear button{min-height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;color:var(--text)}
+.tfclear button:hover{border-color:var(--danger);color:var(--danger)}
 .tfhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px;flex-wrap:wrap}
 .tabs{display:flex;gap:4px;background:var(--surface-2);padding:3px;border-radius:10px}
 .tabs button{border:0;background:transparent;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--muted);min-height:34px}
@@ -253,6 +263,10 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
           <button data-f="in" aria-pressed="false">↓ Masuk <span id="cntIn">0</span></button>
           <button data-f="out" aria-pressed="false">↑ Keluar <span id="cntOut">0</span></button>
         </div>
+      </div>
+      <div class="tfclear" id="tfClear" hidden>
+        <button id="clearFailBtn" hidden>Hapus yang gagal/batal (<span id="cntFail">0</span>)</button>
+        <button id="clearDoneBtn">Hapus semua riwayat</button>
       </div>
       <div class="transfers" id="transfers" data-f="all"></div>
     </section>
@@ -686,6 +700,11 @@ function addTransfer({ name, path, size, dir, peer }) {
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V7m0 0-5 5m5-5 5 5"/></svg>';
   el.innerHTML = `<div class="ic" title="${dir === 'in' ? 'File masuk' : 'File keluar'}">${arrow}<b>${esc(ext)}</b></div><div style="min-width:0"><div class="nm" title="${esc(name)}">${esc(name)}</div>${path ? `<div class="path">${esc(path)}/</div>` : ''}<div class="meta"><span class="dir">${dir === 'in' ? 'MASUK' : 'KELUAR'}</span><span class="st">${dir === 'out' ? 'ke ' : 'dari '}${esc(peer)}</span> · <span class="pr">0%</span> · ${fmtSize(size)}</div><div class="bar"><i></i></div></div><div class="act"></div>`;
   if (dir === 'out') { const b = document.createElement('button'); b.textContent = 'Batal'; b.onclick = () => { for (const p of S.peers.values()) { const j = p.queue.find(q => q.ui === el); if (j) { p.queue.splice(p.queue.indexOf(j), 1); failTransfer(el, 'Dibatalkan'); } } if (el._job) { el._job.cancel = true; el._job.xhr && el._job.xhr.abort(); } }; el.querySelector('.act').append(b); }
+  const rm = document.createElement('button');
+  rm.className = 'rm'; rm.title = 'Hapus dari riwayat'; rm.setAttribute('aria-label', 'Hapus ' + name + ' dari riwayat');
+  rm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  rm.onclick = () => removeTransfer(el);
+  el.append(rm);
   $('#transfers').prepend(el);
   countTransfers();
   return el;
@@ -693,8 +712,28 @@ function addTransfer({ name, path, size, dir, peer }) {
 function countTransfers() {
   $('#cntIn').textContent = document.querySelectorAll('#transfers .tf.in').length;
   $('#cntOut').textContent = document.querySelectorAll('#transfers .tf.out').length;
-  $('#tfHead').hidden = !document.querySelector('#transfers .tf');
+  const any = !!document.querySelector('#transfers .tf');
+  $('#tfHead').hidden = !any;
+  const fails = document.querySelectorAll('#transfers .tf.fail').length;
+  $('#cntFail').textContent = fails; $('#clearFailBtn').hidden = !fails;
+  $('#tfClear').hidden = !document.querySelector('#transfers .tf.done, #transfers .tf.fail');
 }
+// Hapus dari riwayat saja; file yang sudah tersimpan tidak ikut terhapus
+function removeTransfer(el) {
+  if (el._blobUrl) URL.revokeObjectURL(el._blobUrl);
+  el.remove(); countTransfers();
+}
+$('#clearFailBtn').onclick = () => {
+  const list = document.querySelectorAll('#transfers .tf.fail');
+  list.forEach(removeTransfer); toast(list.length + ' transfer gagal/batal dihapus dari riwayat.');
+};
+$('#clearDoneBtn').onclick = async () => {
+  const list = document.querySelectorAll('#transfers .tf.done, #transfers .tf.fail');
+  if (!list.length) return;
+  const running = document.querySelectorAll('#transfers .tf:not(.done):not(.fail)').length;
+  if (!await confirmBox({ title: 'Hapus semua riwayat transfer?', text: list.length + ' item akan dihapus dari daftar. File yang sudah tersimpan tidak ikut terhapus.' + (running ? ' Transfer yang sedang berjalan tetap ditampilkan.' : ''), ok: 'Hapus', danger: true })) return;
+  list.forEach(removeTransfer); toast('Riwayat transfer dihapus.');
+};
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-pressed', x === b));
   $('#transfers').dataset.f = b.dataset.f;
@@ -729,6 +768,7 @@ function updTransfer(el, got, size, label) {
     const avg = secs > 0.3 && total ? ' · rata-rata ' + fmtSize(total / secs) + '/s' : '';
     el.querySelector('.pr').textContent = label + avg;
     el.classList.add('done'); el.querySelector('.act').innerHTML = '';
+    countTransfers();
     return;
   }
   el._size = size;
@@ -743,11 +783,11 @@ function updTransfer(el, got, size, label) {
   if (sp.rate > 0) txt += ' · ' + fmtSize(sp.rate) + '/s · sisa ' + fmtEta((size - got) / sp.rate);
   el.querySelector('.pr').textContent = txt;
 }
-function failTransfer(el, text) { el.classList.add('fail'); el.querySelector('.pr').textContent = text; el.querySelector('.act').innerHTML = ''; }
+function failTransfer(el, text) { el.classList.add('fail'); el.querySelector('.pr').textContent = text; el.querySelector('.act').innerHTML = ''; countTransfers(); }
 function finishIncoming(el, blob, name) {
   updTransfer(el, 1, 1, 'Selesai');
   actBtn(el, 'Buka', () => openBlob(blob));
-  const url = URL.createObjectURL(blob);
+  const url = el._blobUrl = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = name; a.textContent = 'Simpan';
   el.querySelector('.act').append(a);
 }

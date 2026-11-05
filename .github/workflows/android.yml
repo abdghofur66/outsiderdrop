@@ -20,7 +20,14 @@ jobs:
         with: { name: OutsiderDrop-apk, path: OutsiderDrop.apk }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
-      - run: npm ci && npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist
+      - name: Build host laptop (dengan percobaan ulang)
+        run: |
+          npm ci
+          for i in 1 2 3; do
+            npx pkg . --no-bytecode --public-packages "*" --public --compress GZip --out-path dist && exit 0
+            echo "Percobaan $i gagal, ulangi..."; sleep 20
+          done
+          exit 1
       - name: Rilis otomatis
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
