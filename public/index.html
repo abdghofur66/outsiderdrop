@@ -471,14 +471,16 @@ function makePeer(info, initiator) {
   p.send = d => p.relay ? relaySend(p.id, d) : dc.send(d);
   p.buffered = () => p.relay ? (S.ws ? S.ws.bufferedAmount : 0) : dc.bufferedAmount;
   // Mode lokal: bila sambungan langsung tidak terbuka dalam 3 detik, kirim lewat host
-  if (CONFIG.mode === 'local') setTimeout(() => { if (!p.open && S.peers.get(p.id) === p) useRelay(p); }, FORCE_RELAY ? 0 : 3000);
+  // Mode lokal: semua lewat host (HTTP) karena jauh lebih cepat & stabil di HP daripada WebRTC
+  if (CONFIG.mode === 'local' && CONFIG.pipe) setTimeout(() => { if (S.peers.get(p.id) === p) useRelay(p); }, 0);
+  else if (CONFIG.mode === 'local') setTimeout(() => { if (!p.open && S.peers.get(p.id) === p) useRelay(p); }, FORCE_RELAY ? 0 : 3000);
   S.peers.set(p.id, p);
   pc.onicecandidate = e => e.candidate && sig(p.id, { type: 'ice', ice: e.candidate });
   pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' && !p.relay) toast('Gagal tersambung langsung ke ' + p.name + '. Coba jaringan lain.', true); renderPeers(); };
   dc.onopen = () => { if (p.relay) return; p.open = true; renderPeers(); pump(p); };
   dc.onclose = () => { if (p.relay) return; p.open = false; renderPeers(); };
   dc.onmessage = e => onData(p, e.data);
-  if (initiator) (async () => { await pc.setLocalDescription(await pc.createOffer()); sig(p.id, { type: 'sdp', sdp: pc.localDescription }); })();
+  if (initiator && !(CONFIG.mode === 'local' && CONFIG.pipe)) (async () => { await pc.setLocalDescription(await pc.createOffer()); sig(p.id, { type: 'sdp', sdp: pc.localDescription }); })();
   return p;
 }
 function useRelay(p) {
@@ -500,7 +502,7 @@ function renderPeers() {
   const box = $('#peers');
   if (!S.peers.size) { box.innerHTML = `<div class="empty-peers">Belum ada perangkat lain. Buka halaman ini di perangkat lain${CONFIG.mode === 'local' ? ' yang tersambung ke WiFi/hotspot yang sama' : ', lalu masukkan kode <b>' + esc(S.room || '') + '</b> atau pindai QR dari tombol Undang'}.</div>`; return; }
   const items = [{ id: 'all', name: 'Semua perangkat', sub: S.peers.size + ' perangkat', icon: ICON.all, on: true }]
-    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + (p.relay ? ' · siap (lewat host)' : ' · siap') : 'menyambung…', icon: osIcon(p.os), on: p.open })));
+    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + (p.relay ? ' · siap' : ' · siap (langsung)') : 'menyambung…', icon: osIcon(p.os), on: p.open })));
   box.innerHTML = items.map(i => `<button class="peer${i.on ? '' : ' off'}" data-id="${i.id}" aria-pressed="${S.target === i.id}">${i.icon}<span><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></span></button>`).join('');
   box.querySelectorAll('.peer').forEach(b => b.onclick = () => setTarget(b.dataset.id));
 }
