@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OutsiderDrop</title>
+<meta name="description" content="Kirim file dan pesan antar HP, laptop, Android, iPhone, Mac, Windows, langsung tanpa batas ukuran.">
+<meta name="theme-color" content="#f3f6f8">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<script>
+  // Terapkan tema sebelum tampil agar tidak berkedip
+  (function(){try{var t=localStorage.getItem('od-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
+<style>
+/* Layout: header ruang + dua kolom (perangkat & kirim | percakapan), menumpuk di HP */
+:root{
+  --bg:#f3f6f8; --surface:#ffffff; --surface-2:#e9eff3; --text:#14212b; --muted:#5d6f7c;
+  --border:#d5dfe6; --primary:#0b7a75; --primary-ink:#ffffff; --signal:#e8a33d; --danger:#c8423b; --ok:#2e8b57;
+  --display:'Manrope',system-ui,sans-serif; --body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+  --radius:12px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e161c; --surface:#16222b; --surface-2:#1d2c37; --text:#e4edf2; --muted:#8fa3b1;
+  --border:#2a3c48; --primary:#3cc3b9; --primary-ink:#06201e; --signal:#f0b65a; --danger:#ef6b63; --ok:#5cc58a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e161c; --surface:#16222b; --surface-2:#1d2c37; --text:#e4edf2; --muted:#8fa3b1;
+  --border:#2a3c48; --primary:#3cc3b9; --primary-ink:#06201e; --signal:#f0b65a; --danger:#ef6b63; --ok:#5cc58a; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.5 var(--body);min-height:100vh;display:flex;flex-direction:column;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+[hidden]{display:none!important}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+button,input,textarea{font:inherit;color:inherit}
+input,textarea{font-size:16px}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+a{color:var(--primary)}
+
+.wrap{width:100%;max-width:1120px;margin:0 auto}
+header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto}
+.brand svg{width:34px;height:34px;flex:none}
+.brand h1{font-size:20px;letter-spacing:-.01em}
+.brand small{display:block;color:var(--muted);font-size:12px;font-family:var(--body);font-weight:500}
+.icon-btn{width:44px;height:44px;border-radius:10px;border:1px solid var(--border);background:var(--surface);display:grid;place-items:center}
+.icon-btn:hover{border-color:var(--primary);color:var(--primary)}
+.icon-btn svg{width:20px;height:20px}
+.mode-pill{font:600 12px var(--mono);padding:4px 10px;border-radius:99px;background:var(--surface-2);color:var(--muted);letter-spacing:.04em}
+.mode-pill.local{background:color-mix(in srgb,var(--signal) 22%,transparent);color:var(--text)}
+
+.btn{min-height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn:hover{border-color:var(--primary)}
+.btn.primary{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.btn svg{width:18px;height:18px}
+
+/* ---- Join ---- */
+.join{flex:1;display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;padding-block:24px 40px}
+.join h2{font-size:clamp(30px,5vw,46px);line-height:1.08;letter-spacing:-.02em;font-weight:800}
+.join p.lead{color:var(--muted);max-width:52ch;font-size:16px}
+.platforms{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.platforms span{font:500 12px var(--mono);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--muted)}
+.join-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:16px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--muted)}
+.field input{width:100%;min-height:46px;border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:0 14px}
+.code-input{font-family:var(--mono)!important;font-size:22px!important;letter-spacing:.3em;text-transform:uppercase;text-align:center}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--border)}
+
+/* ---- Room ---- */
+.room{flex:1;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:20px;padding-block:6px 24px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;min-width:0}
+.panel h3{font-size:15px;display:flex;align-items:center;gap:8px}
+.eyebrow{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+
+.roombar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 18px;grid-column:1/-1}
+.roomcode{font:700 28px var(--mono);letter-spacing:.18em;color:var(--primary)}
+.roombar .grow{flex:1;min-width:140px}
+.roombar .me{font-size:13px;color:var(--muted)}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+.status-dot.on{background:var(--ok)}
+.status-dot.wait{background:var(--signal)}
+
+.peers{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.peer{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);min-height:56px;text-align:left}
+.peer svg{width:22px;height:22px;flex:none}
+.peer b{display:block;font-size:14px}
+.peer small{color:var(--muted);font-size:12px}
+.peer[aria-pressed="true"]{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,var(--bg))}
+.peer.off{opacity:.55}
+.empty-peers{color:var(--muted);font-size:14px;padding:14px;border:1.5px dashed var(--border);border-radius:12px;width:100%}
+
+.drop{margin-top:16px;border:2px dashed var(--border);border-radius:14px;padding:28px 16px;text-align:center;transition:.15s;background:var(--bg)}
+.drop.over{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 8%,var(--bg))}
+.drop svg{width:36px;height:36px;color:var(--primary)}
+.drop p{margin:8px 0 14px;color:var(--muted)}
+.drop strong{color:var(--text)}
+
+.transfers{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.pick-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.savebar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;font-size:14px}
+.savebar svg{width:22px;height:22px;color:var(--signal);flex:none}
+.savebar span{flex:1;min-width:180px}
+.savebar small{display:block;color:var(--muted);font-size:12px}
+.tf .path{font:500 11px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tf{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:12px}
+.tf .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);font:700 10px var(--mono);color:var(--muted)}
+.tf .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tf .meta{font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.bar{height:5px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;width:0;background:var(--primary);transition:width .2s}
+.tf.done .bar i{background:var(--ok)}
+.tf.fail .bar i{background:var(--danger)}
+.tf .act{display:flex;gap:6px}
+.tf .act a,.tf .act button{min-height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;text-decoration:none;color:var(--text);display:inline-flex;align-items:center}
+.tf .act a{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+
+/* ---- Chat ---- */
+.chat{display:flex;flex-direction:column;height:min(640px,calc(100vh - 140px));min-height:420px}
+.chat-head{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.search{position:relative;margin-top:12px}
+.search input{width:100%;min-height:42px;border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:0 40px 0 38px}
+.search .s-ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--muted)}
+.search .clear{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;background:transparent;border-radius:8px;color:var(--muted);display:grid;place-items:center}
+.search .clear:hover{color:var(--text);background:var(--surface-2)}
+.msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:14px 2px;min-height:0}
+.msg{max-width:85%;padding:9px 13px;border-radius:14px;background:var(--surface-2);word-wrap:break-word;white-space:pre-wrap}
+.msg.me{align-self:flex-end;background:var(--primary);color:var(--primary-ink);border-bottom-right-radius:4px}
+.msg.them{align-self:flex-start;border-bottom-left-radius:4px}
+.msg .who{display:block;font-size:11px;font-weight:600;opacity:.75;margin-bottom:2px}
+.msg .tm{display:block;font:500 10px var(--mono);opacity:.65;margin-top:3px;text-align:right}
+.msg mark{background:var(--signal);color:#1a1205;border-radius:3px}
+.msgs .hint{margin:auto;color:var(--muted);text-align:center;font-size:14px;max-width:30ch}
+.compose{display:flex;gap:8px;align-items:flex-end}
+.compose textarea{flex:1;min-height:46px;max-height:140px;resize:none;border:1px solid var(--border);border-radius:12px;background:var(--bg);padding:11px 14px}
+.compose .btn{width:46px;padding:0}
+.target-note{font-size:12px;color:var(--muted);margin:0 0 6px}
+
+/* ---- Modal, toast, footer ---- */
+.modal-bg{position:fixed;inset:0;background:rgba(5,12,16,.55);display:grid;place-items:center;padding:20px;z-index:50}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;width:min(400px,100%)}
+.modal h3{font-size:18px;margin-bottom:6px}
+.modal p{color:var(--muted);margin:0 0 18px}
+.modal .row{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.qrbox{display:grid;place-items:center;padding:14px;background:#fff;border-radius:12px;margin:0 auto 12px;width:max-content}
+.linkbox{display:flex;gap:8px;margin-bottom:16px}
+.linkbox input{flex:1;min-width:0;min-height:42px;border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:0 12px;font:500 13px var(--mono)}
+.toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;z-index:60;width:min(420px,calc(100% - 32px))}
+.toast{background:var(--text);color:var(--bg);padding:11px 16px;border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast.err{background:var(--danger);color:#fff}
+.banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:color-mix(in srgb,var(--primary) 12%,var(--surface));border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:14px}
+.banner span{flex:1;min-width:180px}
+.app-footer{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding-block:16px calc(16px + env(safe-area-inset-bottom,0px))}
+.dev-by{color:var(--muted)}
+.dev-link{display:inline-flex;align-items:center;gap:4px;color:var(--text);text-decoration:none}
+.dev-link:hover{color:var(--primary);text-decoration:none}
+
+@media (max-width:860px){
+  .join{grid-template-columns:1fr;gap:24px;padding-top:8px}
+  .room{grid-template-columns:1fr}
+  .chat{height:auto;min-height:0}
+  .msgs{max-height:55vh;min-height:220px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap" style="display:flex;flex-direction:column;flex:1">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="11" fill="var(--primary)"/><path d="M20 9v15m0 0-6-6m6 6 6-6M11 29h18" stroke="var(--primary-ink)" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><h1>OutsiderDrop</h1><small>Kirim file & pesan lintas perangkat</small></div>
+    </div>
+    <span id="modePill" class="mode-pill">ONLINE</span>
+    <button class="icon-btn" id="installBtn" hidden aria-label="Pasang aplikasi" title="Pasang aplikasi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg></button>
+    <button class="icon-btn" id="themeBtn" aria-label="Ganti tema" title="Ganti tema"></button>
+  </header>
+
+  <!-- ============ JOIN ============ -->
+  <main id="joinView" class="join">
+    <section>
+      <span class="eyebrow">Langsung antarperangkat · tanpa batas ukuran</span>
+      <h2 style="margin-top:10px">Seret file, pilih perangkat, terkirim.</h2>
+      <p class="lead">Buka halaman ini di dua perangkat atau lebih, masukkan kode ruang yang sama, lalu kirim file atau pesan. File mengalir langsung dari perangkat ke perangkat dan tidak disimpan di server.</p>
+      <div class="platforms"><span>Android</span><span>iPhone</span><span>Windows</span><span>Mac</span><span>Linux</span></div>
+    </section>
+    <section class="join-card">
+      <div class="field"><label for="nameInput">Nama perangkat ini</label><input id="nameInput" maxlength="40" autocomplete="off"></div>
+      <button class="btn primary" id="createBtn">Buat ruang baru</button>
+      <div class="or">atau gabung ke ruang</div>
+      <div class="field"><label for="codeInput">Kode ruang</label><input id="codeInput" class="code-input" maxlength="6" placeholder="ABC123" autocomplete="off" autocapitalize="characters" inputmode="text"></div>
+      <button class="btn" id="joinBtn">Gabung</button>
+    </section>
+  </main>
+
+  <!-- ============ ROOM ============ -->
+  <main id="roomView" class="room" hidden>
+    <div class="roombar">
+      <div>
+        <span class="eyebrow" id="roomLabel">Kode ruang</span>
+        <div class="roomcode" id="roomCode">------</div>
+      </div>
+      <div class="grow me"><span class="status-dot wait" id="sigDot"></span><span id="sigText">Menghubungkan…</span><br>Anda: <b id="meName"></b></div>
+      <button class="btn" id="shareBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>Undang</button>
+      <button class="btn" id="leaveBtn">Keluar</button>
+    </div>
+
+    <section class="panel">
+      <div id="notifBanner" class="banner" hidden><span>Nyalakan notifikasi agar tahu saat ada file atau pesan masuk.</span><button class="btn" id="notifBtn">Nyalakan</button></div>
+      <h3>Perangkat di ruang ini</h3>
+      <div class="peers" id="peers"></div>
+      <div class="drop" id="drop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <p><strong>Seret file ke sini</strong> atau pilih dari perangkat.<br>Tujuan: <b id="targetText">semua perangkat</b></p>
+        <input type="file" id="fileInput" multiple hidden>
+        <input type="file" id="folderInput" webkitdirectory multiple hidden>
+        <div class="pick-row"><button class="btn primary" id="pickBtn">Pilih file</button><button class="btn" id="pickFolderBtn">Pilih folder</button></div>
+      </div>
+      <div class="savebar" id="saveBar" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span>File masuk disimpan ke: <b id="saveDirText">Unduhan (tekan Simpan per file)</b><small>Disarankan untuk file besar: langsung ditulis ke disk, hemat memori.</small></span>
+        <button class="btn" id="saveDirBtn">Pilih folder</button>
+        <button class="btn" id="saveDirReset" hidden>Batalkan</button>
+      </div>
+      <div class="transfers" id="transfers"></div>
+    </section>
+
+    <section class="panel chat">
+      <div class="chat-head"><h3>Pesan</h3><button class="btn" id="clearChatBtn" style="min-height:36px;padding:0 12px;font-size:13px">Hapus riwayat</button></div>
+      <div class="search">
+        <svg class="s-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="searchInput" type="search" placeholder="Cari pesan" aria-label="Cari pesan">
+        <button class="clear" id="searchClear" aria-label="Hapus pencarian" hidden><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="msgs" id="msgs"></div>
+      <p class="target-note">Ke: <b id="chatTarget">semua perangkat</b> · Enter untuk kirim, Shift+Enter baris baru</p>
+      <form class="compose" id="composeForm">
+        <textarea id="msgInput" rows="1" placeholder="Tulis pesan atau link" aria-label="Pesan"></textarea>
+        <button class="btn primary" aria-label="Kirim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+      </form>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span class="dev-by">Developed by</span>
+    <a href="https://outsiderdev.com" target="_blank" rel="noopener" class="dev-link">
+      <img src="https://outsiderdev.com/img/ico.png" alt="OutsiderDev" height="18" onerror="this.remove()">
+      <strong>OutsiderDev</strong>
+    </a>
+  </footer>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div id="modalRoot"></div>
+
+<script src="/qrcode.min.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} }
+};
+const rid = n => Array.from({ length: n }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random() * 32 | 0]).join('');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB';
+const fmtTime = t => new Date(t).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+/* ---------- Tema ---------- */
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+function isDark() { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
+function paintTheme() { $('#themeBtn').innerHTML = isDark() ? SUN : MOON; document.querySelector('meta[name=theme-color]').content = isDark() ? '#0e161c' : '#f3f6f8'; }
+$('#themeBtn').onclick = () => { const t = isDark() ? 'light' : 'dark'; document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('od-theme', t); } catch {} paintTheme(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paintTheme);
+paintTheme();
+
+/* ---------- Toast & modal ---------- */
+function toast(text, err) { const el = document.createElement('div'); el.className = 'toast' + (err ? ' err' : ''); el.textContent = text; $('#toasts').append(el); setTimeout(() => el.remove(), 3500); }
+function confirmBox({ title, text, ok = 'Ya', danger }) {
+  return new Promise(res => {
+    const root = $('#modalRoot');
+    root.innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true"><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="row"><button class="btn" data-a="0">Batal</button><button class="btn ${danger ? 'danger' : 'primary'}" data-a="1">${esc(ok)}</button></div></div></div>`;
+    const close = v => { root.innerHTML = ''; res(v); };
+    root.querySelector('.modal-bg').onclick = e => { if (e.target.dataset.a) close(e.target.dataset.a === '1'); else if (e.target.classList.contains('modal-bg')) close(false); };
+    root.querySelector('[data-a="1"]').focus();
+  });
+}
+
+/* ---------- Deteksi perangkat ---------- */
+function detectOS() {
+  const u = navigator.userAgent;
+  if (/android/i.test(u)) return 'Android';
+  if (/iphone|ipod/i.test(u)) return 'iPhone';
+  if (/ipad/i.test(u) || (/macintosh/i.test(u) && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/macintosh|mac os/i.test(u)) return 'Mac';
+  if (/windows/i.test(u)) return 'Windows';
+  if (/linux/i.test(u)) return 'Linux';
+  return 'Perangkat';
+}
+const MYOS = detectOS();
+const ICON = {
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>',
+  laptop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>',
+  all: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="12" cy="21" r="1.6"/><path d="M6 7l4 3.5M18 7l-4 3.5M12 15v4"/></svg>'
+};
+const osIcon = os => /Android|iPhone/.test(os) ? ICON.phone : ICON.laptop;
+
+/* ---------- State ---------- */
+let CONFIG = { mode: 'online' };
+const S = { ws: null, room: null, myId: null, name: '', peers: new Map(), target: 'all', pingT: null, retry: 0, leaving: false };
+const ICE_ONLINE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+let ICE = null;
+async function loadIce() {
+  if (CONFIG.mode === 'local') return ICE = [];
+  if (ICE) return ICE;
+  ICE = ICE_ONLINE;
+  try {
+    const r = await fetch('/turn', { cache: 'no-store' });
+    if (r.ok) { const j = await r.json(); const t = j.iceServers; if (t) ICE = ICE_ONLINE.concat(Array.isArray(t) ? t : [t]); }
+  } catch {}
+  setTimeout(() => { ICE = null; }, 6 * 3600 * 1000); // kredensial TURN diperbarui berkala
+  return ICE;
+}
+const CHUNK = 64 * 1024;
+const HIGH = 4 * 1024 * 1024;
+
+$('#nameInput').value = store.get('od-name', MYOS + ' ' + rid(3));
+
+/* ---------- Mode (online / lokal) ---------- */
+async function loadConfig() {
+  try {
+    const r = await fetch('/config.json', { cache: 'no-store' });
+    if (r.ok) { const c = await r.json(); if (c && c.mode) CONFIG = c; }
+  } catch {}
+  const pill = $('#modePill');
+  if (CONFIG.mode === 'local') { pill.textContent = 'LOKAL · TANPA INTERNET'; pill.classList.add('local'); }
+}
+
+/* ---------- Gabung ruang ---------- */
+function joinRoom(code) {
+  const name = $('#nameInput').value.trim() || MYOS;
+  store.set('od-name', name);
+  S.name = name; S.room = code.toUpperCase(); S.leaving = false;
+  $('#joinView').hidden = true; $('#roomView').hidden = false;
+  $('#roomCode').textContent = S.room;
+  $('#roomLabel').textContent = CONFIG.mode === 'local' ? 'Ruang lokal' : 'Kode ruang';
+  $('#meName').textContent = name + ' (' + MYOS + ')';
+  const u = new URL(location.href); if (CONFIG.mode !== 'local') { u.searchParams.set('r', S.room); history.replaceState(null, '', u); }
+  loadChat(); renderPeers(); connectSignal();
+  maybeShowNotifBanner();
+}
+$('#createBtn').onclick = () => joinRoom(rid(6));
+$('#joinBtn').onclick = () => { const c = $('#codeInput').value.trim().toUpperCase(); if (!/^[A-Z0-9]{4,12}$/.test(c)) return toast('Kode ruang harus 4–12 huruf/angka.', true); joinRoom(c); };
+$('#codeInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
+
+$('#leaveBtn').onclick = async () => {
+  if (!await confirmBox({ title: 'Keluar dari ruang ' + S.room + '?', text: 'Pengiriman yang sedang berjalan akan dihentikan.', ok: 'Keluar', danger: true })) return;
+  S.leaving = true;
+  try { S.ws && S.ws.close(); } catch {}
+  for (const p of S.peers.values()) closePeer(p);
+  S.peers.clear();
+  const u = new URL(location.href); u.searchParams.delete('r'); history.replaceState(null, '', u);
+  if (CONFIG.app) { try { ODApp.leave(); } catch {} location.href = '/start.html'; return; }
+  $('#roomView').hidden = true; $('#joinView').hidden = false; $('#transfers').innerHTML = '';
+  toast('Anda keluar dari ruang.');
+};
+
+/* ---------- Signaling ---------- */
+function setSig(state, text) { $('#sigDot').className = 'status-dot ' + state; $('#sigText').textContent = text; }
+async function connectSignal() {
+  await loadIce();
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${CONFIG.signal || location.host}/ws/${S.room}?name=${encodeURIComponent(S.name)}&os=${encodeURIComponent(MYOS)}`);
+  S.ws = ws; setSig('wait', 'Menghubungkan…');
+  ws.onopen = () => { S.retry = 0; setSig('on', 'Terhubung'); clearInterval(S.pingT); S.pingT = setInterval(() => ws.readyState === 1 && ws.send('{"type":"ping"}'), 25000); };
+  ws.onmessage = e => onSignal(JSON.parse(e.data));
+  ws.onclose = () => {
+    clearInterval(S.pingT);
+    if (S.leaving) return;
+    setSig('wait', 'Terputus, mencoba lagi…');
+    setTimeout(() => !S.leaving && connectSignal(), Math.min(1000 * 2 ** S.retry++, 15000));
+  };
+}
+const sig = (to, data) => S.ws && S.ws.readyState === 1 && S.ws.send(JSON.stringify({ ...data, to }));
+
+async function onSignal(m) {
+  if (m.type === 'welcome') {
+    S.myId = m.id;
+    // yang baru masuk memulai koneksi ke semua perangkat lama
+    for (const p of S.peers.values()) closePeer(p);
+    S.peers.clear();
+    for (const info of m.peers) { const p = makePeer(info, true); }
+    renderPeers();
+  } else if (m.type === 'join') {
+    makePeer(m.peer, false); renderPeers();
+    toast(m.peer.name + ' masuk ke ruang.');
+  } else if (m.type === 'leave') {
+    const p = S.peers.get(m.id); if (p) { closePeer(p); S.peers.delete(m.id); if (S.target === m.id) setTarget('all'); renderPeers(); toast(p.name + ' keluar.'); }
+  } else if (m.type === 'sdp' || m.type === 'ice') {
+    const p = S.peers.get(m.from); if (!p) return;
+    try {
+      if (m.type === 'sdp') {
+        await p.pc.setRemoteDescription(m.sdp);
+        if (m.sdp.type === 'offer') { await p.pc.setLocalDescription(await p.pc.createAnswer()); sig(p.id, { type: 'sdp', sdp: p.pc.localDescription }); }
+        for (const c of p.pendingIce.splice(0)) await p.pc.addIceCandidate(c).catch(() => {});
+      } else {
+        if (p.pc.remoteDescription) await p.pc.addIceCandidate(m.ice).catch(() => {}); else p.pendingIce.push(m.ice);
+      }
+    } catch (err) { console.warn(err); }
+  }
+}
+
+/* ---------- WebRTC per perangkat ---------- */
+function makePeer(info, initiator) {
+  const pc = new RTCPeerConnection({ iceServers: ICE || (CONFIG.mode === 'local' ? [] : ICE_ONLINE) });
+  const dc = pc.createDataChannel('od', { negotiated: true, id: 0, ordered: true });
+  dc.binaryType = 'arraybuffer';
+  dc.bufferedAmountLowThreshold = 1024 * 1024;
+  const p = { id: info.id, name: info.name, os: info.os, pc, dc, open: false, pendingIce: [], queue: [], sending: false, incoming: null };
+  S.peers.set(p.id, p);
+  pc.onicecandidate = e => e.candidate && sig(p.id, { type: 'ice', ice: e.candidate });
+  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') toast('Gagal tersambung langsung ke ' + p.name + '. Coba jaringan lain.', true); renderPeers(); };
+  dc.onopen = () => { p.open = true; renderPeers(); pump(p); };
+  dc.onclose = () => { p.open = false; renderPeers(); };
+  dc.onmessage = e => onData(p, e.data);
+  if (initiator) (async () => { await pc.setLocalDescription(await pc.createOffer()); sig(p.id, { type: 'sdp', sdp: pc.localDescription }); })();
+  return p;
+}
+function closePeer(p) { try { p.dc.close(); p.pc.close(); } catch {} }
+
+function renderPeers() {
+  const box = $('#peers');
+  if (!S.peers.size) { box.innerHTML = `<div class="empty-peers">Belum ada perangkat lain. Buka halaman ini di perangkat lain${CONFIG.mode === 'local' ? ' yang tersambung ke WiFi/hotspot yang sama' : ', lalu masukkan kode <b>' + esc(S.room || '') + '</b> atau pindai QR dari tombol Undang'}.</div>`; return; }
+  const items = [{ id: 'all', name: 'Semua perangkat', sub: S.peers.size + ' perangkat', icon: ICON.all, on: true }]
+    .concat([...S.peers.values()].map(p => ({ id: p.id, name: p.name, sub: p.open ? (p.os || '') + ' · siap' : 'menyambung…', icon: osIcon(p.os), on: p.open })));
+  box.innerHTML = items.map(i => `<button class="peer${i.on ? '' : ' off'}" data-id="${i.id}" aria-pressed="${S.target === i.id}">${i.icon}<span><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></span></button>`).join('');
+  box.querySelectorAll('.peer').forEach(b => b.onclick = () => setTarget(b.dataset.id));
+}
+function setTarget(id) {
+  S.target = id;
+  const n = id === 'all' ? 'semua perangkat' : (S.peers.get(id) || {}).name || 'semua perangkat';
+  $('#targetText').textContent = n; $('#chatTarget').textContent = n;
+  renderPeers();
+}
+const targets = () => S.target === 'all' ? [...S.peers.values()] : [S.peers.get(S.target)].filter(Boolean);
+
+/* ---------- Kirim file ---------- */
+const relPath = f => { const r = f._path || f.webkitRelativePath || ''; const i = r.lastIndexOf('/'); return i > 0 ? r.slice(0, i) : ''; };
+function sendFiles(files) {
+  files = files.filter(f => f && f.name);
+  if (!files.length) return;
+  const tg = targets();
+  if (!tg.length) return toast('Belum ada perangkat tujuan di ruang ini.', true);
+  for (const f of files) for (const p of tg) {
+    const id = rid(10);
+    const path = relPath(f);
+    const ui = addTransfer({ id, name: f.name, path, size: f.size, dir: 'out', peer: p.name });
+    p.queue.push({ file: f, id, ui, path });
+  }
+  tg.forEach(pump);
+}
+async function pump(p) {
+  if (p.sending || !p.open || !p.queue.length) return;
+  p.sending = true;
+  const job = p.queue.shift();
+  const { file, id, ui, path } = job;
+  ui._job = job;
+  try {
+    p.dc.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type }));
+    let off = 0, last = 0;
+    while (off < file.size) {
+      if (job.cancel) throw new Error('batal');
+      if (!p.open) throw new Error('putus');
+      if (p.dc.bufferedAmount > HIGH) { await new Promise(r => { p.dc.onbufferedamountlow = () => { p.dc.onbufferedamountlow = null; r(); }; }); continue; }
+      const buf = await file.slice(off, off + CHUNK).arrayBuffer();
+      p.dc.send(buf); off += buf.byteLength;
+      const now = performance.now(); if (now - last > 150) { updTransfer(ui, off, file.size); last = now; }
+    }
+    p.dc.send(JSON.stringify({ t: 'end', id }));
+    updTransfer(ui, file.size, file.size, 'Terkirim');
+  } catch (err) {
+    failTransfer(ui, err.message === 'batal' ? 'Dibatalkan' : 'Gagal: koneksi terputus');
+    try { p.dc.send(JSON.stringify({ t: 'abort', id })); } catch {}
+  }
+  p.sending = false; pump(p);
+}
+
+/* ---------- Terima data ---------- */
+function onData(p, data) {
+  if (typeof data !== 'string') {
+    const inc = p.incoming; if (!inc) return;
+    inc.got += data.byteLength;
+    if (inc.disk) inc.chain = inc.chain.then(() => inc.w && inc.w.write(data));
+    else if (inc.app) { inc.abuf.push(data); inc.alen += data.byteLength; if (inc.alen >= 1048576) appFlush(inc); }
+    else {
+      inc.parts.push(data);
+      // gabungkan potongan tiap ~32MB jadi Blob agar memori lebih hemat
+      if (inc.parts.length >= 512) { inc.blobs.push(new Blob(inc.parts)); inc.parts = []; }
+    }
+    const now = performance.now(); if (now - inc.last > 150) { updTransfer(inc.ui, inc.got, inc.size); inc.last = now; }
+    return;
+  }
+  const m = JSON.parse(data);
+  if (m.t === 'file') {
+    const inc = p.incoming = { ...m, got: 0, parts: [], blobs: [], last: 0, disk: !!S.dir, app: !S.dir && !!CONFIG.save, abuf: [], alen: 0, ui: addTransfer({ id: m.id, name: m.name, path: m.path, size: m.size, dir: 'in', peer: p.name }) };
+    if (inc.app) inc.chain = appSave('open', inc, null);
+    if (inc.disk) inc.chain = openDiskFile(m.path, m.name).then(fh => { inc.fh = fh; return fh.createWritable(); }).then(w => { inc.w = w; });
+    notify('File masuk dari ' + p.name, m.name + ' · ' + fmtSize(m.size));
+  } else if (m.t === 'end' && p.incoming && p.incoming.id === m.id) {
+    const inc = p.incoming; p.incoming = null;
+    if (inc.app) {
+      appFlush(inc);
+      inc.chain.then(() => appSave('close', inc, null)).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan di ' + (CONFIG.saveDir || 'Download/OutsiderDrop')); toast('Tersimpan: ' + inc.name); })
+        .catch(() => failTransfer(inc.ui, 'Gagal menyimpan'));
+    } else if (inc.disk) {
+      inc.chain.then(() => inc.w.close()).then(() => { updTransfer(inc.ui, 1, 1, 'Tersimpan di folder'); toast('Tersimpan: ' + inc.name); })
+        .catch(err => { console.warn(err); failTransfer(inc.ui, 'Gagal menyimpan ke folder'); });
+    } else {
+      const blob = new Blob(inc.blobs.concat(inc.parts.length ? [new Blob(inc.parts)] : []), { type: inc.mime || 'application/octet-stream' });
+      finishIncoming(inc.ui, blob, inc.name);
+      toast('Diterima: ' + inc.name);
+    }
+  } else if (m.t === 'abort' && p.incoming && p.incoming.id === m.id) {
+    const inc = p.incoming; failTransfer(inc.ui, 'Dibatalkan pengirim'); p.incoming = null;
+    if (inc.app) inc.chain.then(() => appSave('abort', inc, null)).catch(() => {});
+    if (inc.disk) inc.chain.then(() => inc.w && inc.w.abort()).then(() => inc.fh && inc.fh.remove && inc.fh.remove()).catch(() => {});
+  } else if (m.t === 'msg') {
+    addMsg({ from: p.name, text: m.text, me: false, ts: m.ts || Date.now() });
+    notify('Pesan dari ' + p.name, m.text.slice(0, 120));
+  }
+}
+
+/* ---------- Simpan lewat aplikasi Android (tulis langsung ke Download) ---------- */
+function appSave(op, inc, body) {
+  const q = new URLSearchParams({ id: inc.id, name: inc.name, path: inc.path || '' });
+  return fetch('/save/' + op + '?' + q, { method: 'POST', body }).then(r => { if (!r.ok) throw new Error('save'); });
+}
+function appFlush(inc) {
+  if (!inc.alen) return;
+  const blob = new Blob(inc.abuf); inc.abuf = []; inc.alen = 0;
+  inc.chain = inc.chain.then(() => appSave('append', inc, blob));
+}
+
+/* ---------- UI transfer ---------- */
+function addTransfer({ name, path, size, dir, peer }) {
+  const el = document.createElement('div');
+  el.className = 'tf';
+  const ext = (name.split('.').pop() || 'file').slice(0, 4).toUpperCase();
+  el.innerHTML = `<div class="ic">${esc(ext)}</div><div style="min-width:0"><div class="nm" title="${esc(name)}">${esc(name)}</div>${path ? `<div class="path">${esc(path)}/</div>` : ''}<div class="meta"><span class="st">${dir === 'out' ? 'Ke ' : 'Dari '}${esc(peer)}</span> · <span class="pr">0%</span> · ${fmtSize(size)}</div><div class="bar"><i></i></div></div><div class="act"></div>`;
+  if (dir === 'out') { const b = document.createElement('button'); b.textContent = 'Batal'; b.onclick = () => { for (const p of S.peers.values()) { const j = p.queue.find(q => q.ui === el); if (j) { p.queue.splice(p.queue.indexOf(j), 1); failTransfer(el, 'Dibatalkan'); } } el._job && (el._job.cancel = true); }; el.querySelector('.act').append(b); }
+  $('#transfers').prepend(el);
+  return el;
+}
+function updTransfer(el, got, size, label) {
+  const pct = size ? Math.round(got / size * 100) : 100;
+  el.querySelector('.bar i').style.width = pct + '%';
+  el.querySelector('.pr').textContent = label || pct + '%';
+  if (label) { el.classList.add('done'); el.querySelector('.act').innerHTML = ''; }
+}
+function failTransfer(el, text) { el.classList.add('fail'); el.querySelector('.pr').textContent = text; el.querySelector('.act').innerHTML = ''; }
+function finishIncoming(el, blob, name) {
+  updTransfer(el, 1, 1, 'Selesai');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.textContent = 'Simpan';
+  el.querySelector('.act').append(a);
+}
+
+/* ---------- Drag & drop ---------- */
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+// baca isi folder yang diseret (Chrome, Edge, Firefox, Safari)
+async function filesFromDrop(dt) {
+  const items = [...(dt.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!items.length || !items.some(e => e.isDirectory)) return [...dt.files];
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) { const f = await new Promise((res, rej) => entry.file(res, rej)); f._path = prefix + f.name; out.push(f); return; }
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const e of batch) await walk(e, prefix + entry.name + '/');
+    }
+  };
+  for (const e of items) await walk(e, '');
+  return out;
+}
+async function handleDrop(e) {
+  const files = await filesFromDrop(e.dataTransfer);
+  if (files.length > 1) toast(files.length + ' file disiapkan untuk dikirim.');
+  sendFiles(files);
+}
+drop.addEventListener('drop', handleDrop);
+// seret ke mana saja di halaman ruang juga boleh
+document.addEventListener('dragover', e => { if (!$('#roomView').hidden) e.preventDefault(); });
+document.addEventListener('drop', e => { if (!$('#roomView').hidden && !drop.contains(e.target)) { e.preventDefault(); handleDrop(e); } });
+$('#pickBtn').onclick = () => $('#fileInput').click();
+$('#fileInput').onchange = e => { sendFiles([...e.target.files]); e.target.value = ''; };
+$('#pickFolderBtn').onclick = () => $('#folderInput').click();
+$('#folderInput').onchange = e => { const fs = [...e.target.files]; if (fs.length) toast(fs.length + ' file dari folder disiapkan.'); sendFiles(fs); e.target.value = ''; };
+if (!('webkitdirectory' in document.createElement('input'))) $('#pickFolderBtn').hidden = true;
+
+/* ---------- Simpan langsung ke folder (Chrome/Edge di laptop) ---------- */
+async function openDiskFile(path, name) {
+  let dir = S.dir;
+  for (const part of (path || '').split('/').filter(x => x && x !== '..' && x !== '.')) dir = await dir.getDirectoryHandle(part, { create: true });
+  const dot = name.lastIndexOf('.'), base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 0; ; i++) {
+    const nm = i ? `${base} (${i})${ext}` : name;
+    try { await dir.getFileHandle(nm); } catch { return dir.getFileHandle(nm, { create: true }); }
+  }
+}
+if ('showDirectoryPicker' in window && isSecureContext) {
+  $('#saveBar').hidden = false;
+  $('#saveDirBtn').onclick = async () => {
+    try {
+      S.dir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'outsiderdrop' });
+      $('#saveDirText').textContent = S.dir.name;
+      $('#saveDirBtn').textContent = 'Ganti folder'; $('#saveDirReset').hidden = false;
+      toast('File masuk akan disimpan otomatis ke folder ' + S.dir.name + '.');
+    } catch (err) { if (err.name !== 'AbortError') toast('Folder tidak bisa dipakai. Pilih folder lain.', true); }
+  };
+  $('#saveDirReset').onclick = () => { S.dir = null; $('#saveDirText').textContent = 'Unduhan (tekan Simpan per file)'; $('#saveDirBtn').textContent = 'Pilih folder'; $('#saveDirReset').hidden = true; };
+}
+// tempel gambar/file dari clipboard
+document.addEventListener('paste', e => { if ($('#roomView').hidden) return; const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); sendFiles(fs); } });
+
+/* ---------- Chat ---------- */
+let CHAT = [];
+const chatKey = () => 'od-chat-' + S.room;
+function loadChat() { CHAT = store.get(chatKey(), []); renderMsgs(); }
+function addMsg(m) { CHAT.push(m); if (CHAT.length > 500) CHAT = CHAT.slice(-500); store.set(chatKey(), CHAT); renderMsgs(); }
+function renderMsgs() {
+  const q = $('#searchInput').value.trim().toLowerCase();
+  const list = q ? CHAT.filter(m => m.text.toLowerCase().includes(q) || m.from.toLowerCase().includes(q)) : CHAT;
+  const box = $('#msgs');
+  if (!list.length) { box.innerHTML = `<div class="hint">${q ? 'Tidak ada pesan yang cocok dengan “' + esc(q) + '”.' : 'Belum ada pesan. Kirim teks, link, atau catatan ke perangkat lain di sini.'}</div>`; return; }
+  const hl = t => { let s = esc(t); if (q) { const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'); s = s.replace(re, '<mark>$1</mark>'); } return s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">$1</a>'); };
+  box.innerHTML = list.map(m => `<div class="msg ${m.me ? 'me' : 'them'}">${m.me ? '' : `<span class="who">${esc(m.from)}</span>`}${hl(m.text)}<span class="tm">${m.me && m.to ? 'ke ' + esc(m.to) + ' · ' : ''}${fmtTime(m.ts)}</span></div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+$('#composeForm').onsubmit = e => {
+  e.preventDefault();
+  const text = $('#msgInput').value.trim(); if (!text) return;
+  const tg = targets().filter(p => p.open);
+  if (!tg.length) return toast('Belum ada perangkat yang siap menerima.', true);
+  const ts = Date.now();
+  tg.forEach(p => p.dc.send(JSON.stringify({ t: 'msg', text, ts })));
+  addMsg({ from: S.name, text, me: true, ts, to: S.target === 'all' ? '' : tg[0].name });
+  $('#msgInput').value = ''; $('#msgInput').style.height = '';
+};
+$('#msgInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composeForm').requestSubmit(); } });
+$('#msgInput').addEventListener('input', e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px'; });
+// pencarian dengan tombol X
+$('#searchInput').addEventListener('input', () => { $('#searchClear').hidden = !$('#searchInput').value; renderMsgs(); });
+$('#searchClear').onclick = () => { $('#searchInput').value = ''; $('#searchClear').hidden = true; renderMsgs(); $('#searchInput').focus(); };
+$('#clearChatBtn').onclick = async () => {
+  if (!CHAT.length) return toast('Riwayat pesan sudah kosong.');
+  if (!await confirmBox({ title: 'Hapus riwayat pesan?', text: 'Riwayat pesan ruang ' + S.room + ' di perangkat ini akan dihapus. Perangkat lain tidak terpengaruh.', ok: 'Hapus', danger: true })) return;
+  CHAT = []; store.del(chatKey()); renderMsgs(); toast('Riwayat pesan dihapus.');
+};
+
+/* ---------- Undang (QR + link) ---------- */
+$('#shareBtn').onclick = () => {
+  const link = CONFIG.mode === 'local' ? ((/^(localhost|127\.)/.test(location.hostname) || CONFIG.app) && CONFIG.url ? CONFIG.url : location.origin) + '/' : location.origin + '/?r=' + S.room;
+  const root = $('#modalRoot');
+  root.innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true"><h3>Undang perangkat lain</h3><p>${CONFIG.mode === 'local' ? 'Pastikan perangkat tersambung ke WiFi/hotspot yang sama, lalu pindai QR ini.' : 'Pindai QR ini, buka linknya, atau masukkan kode <b>' + S.room + '</b> di perangkat lain.'}</p><div class="qrbox" id="qr"></div><div class="linkbox"><input id="linkOut" readonly value="${esc(link)}"><button class="btn" id="copyLink">Salin</button></div><div class="row"><button class="btn primary" id="closeShare">Selesai</button></div></div></div>`;
+  root.querySelector('.modal p').innerHTML = root.querySelector('.modal p').textContent.replace(S.room, '<b>' + S.room + '</b>');
+  try { new QRCode($('#qr'), { text: link, width: 200, height: 200, colorDark: '#14212b', colorLight: '#ffffff' }); } catch { $('#qr').hidden = true; }
+  $('#copyLink').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link disalin.'); } catch { $('#linkOut').select(); toast('Tekan Salin pada menu untuk menyalin.'); } };
+  $('#closeShare').onclick = () => root.innerHTML = '';
+  root.querySelector('.modal-bg').onclick = e => { if (e.target.classList.contains('modal-bg')) root.innerHTML = ''; };
+};
+
+/* ---------- Notifikasi ---------- */
+function maybeShowNotifBanner() { $('#notifBanner').hidden = !('Notification' in window) || !isSecureContext || Notification.permission !== 'default'; }
+$('#notifBtn').onclick = async () => { try { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notifikasi aktif.' : 'Notifikasi tidak diizinkan.', r !== 'granted'); } catch {} maybeShowNotifBanner(); };
+function notify(title, body) {
+  if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  navigator.serviceWorker?.ready.then(reg => reg.showNotification(title, { body, icon: '/icon.svg', tag: 'od' })).catch(() => { try { new Notification(title, { body }); } catch {} });
+}
+
+/* ---------- PWA ---------- */
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('#installBtn').hidden = false; });
+$('#installBtn').onclick = async () => { if (!deferredPrompt) return; deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; $('#installBtn').hidden = true; };
+if ('serviceWorker' in navigator && isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    reg.addEventListener('updatefound', () => { const w = reg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('Versi baru tersedia. Muat ulang untuk memperbarui.'); }); });
+  }).catch(() => {});
+}
+window.addEventListener('beforeunload', e => { if ([...S.peers.values()].some(p => p.sending || p.incoming)) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- Mulai ---------- */
+(async () => {
+  await loadConfig();
+  if (!('RTCPeerConnection' in window)) { toast('Browser ini tidak mendukung kirim langsung. Gunakan Chrome, Safari, Edge, atau Firefox terbaru.', true); return; }
+  if (CONFIG.mode === 'local') {
+    // Mode lokal: tanpa kode, semua perangkat di jaringan otomatis satu ruang
+    $('#createBtn').textContent = 'Masuk ke ruang lokal';
+    $('#createBtn').onclick = () => joinRoom(CONFIG.room || 'LOKAL');
+    document.querySelector('.or').hidden = true; $('#codeInput').closest('.field').hidden = true; $('#joinBtn').hidden = true;
+    if (store.get('od-name', null) || CONFIG.app) joinRoom(CONFIG.room || 'LOKAL');
+  } else {
+    const r = new URLSearchParams(location.search).get('r');
+    if (r && /^[A-Z0-9]{4,12}$/i.test(r)) { $('#codeInput').value = r.toUpperCase(); if (store.get('od-name', null)) joinRoom(r); }
+  }
+})();
+</script>
+</body>
+</html>

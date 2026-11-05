@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OutsiderDrop</title>
+<style>
+:root{--bg:#f3f6f8;--surface:#fff;--surface-2:#e9eff3;--text:#14212b;--muted:#5d6f7c;--border:#d5dfe6;--primary:#0b7a75;--primary-ink:#fff;--signal:#e8a33d;
+  --display:'Manrope',system-ui,sans-serif;--body:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e161c;--surface:#16222b;--surface-2:#1d2c37;--text:#e4edf2;--muted:#8fa3b1;--border:#2a3c48;--primary:#3cc3b9;--primary-ink:#06201e;--signal:#f0b65a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e161c;--surface:#16222b;--surface-2:#1d2c37;--text:#e4edf2;--muted:#8fa3b1;--border:#2a3c48;--primary:#3cc3b9;--primary-ink:#06201e;--signal:#f0b65a;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--body);min-height:100vh;display:flex;flex-direction:column;
+  padding:max(20px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
+main{flex:1;width:100%;max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:40px;height:40px}
+h1{font:800 22px var(--display);margin:0}
+.brand small{display:block;color:var(--muted);font-size:13px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.card h2{font:700 17px var(--display);margin:0}
+.card p{margin:0;color:var(--muted);font-size:14px}
+.btn{min-height:48px;border-radius:12px;border:1px solid var(--border);background:var(--surface);font:600 15px var(--body);color:var(--text);display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.btn.primary{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+.btn svg{width:20px;height:20px}
+.row{display:flex;gap:8px}
+.row input{flex:1;min-width:0;min-height:48px;border:1px solid var(--border);border-radius:12px;background:var(--bg);padding:0 14px;font:500 16px var(--mono);color:var(--text)}
+.ipline{font:600 13px var(--mono);background:var(--surface-2);border-radius:8px;padding:8px 10px;color:var(--text)}
+.tip{border-left:3px solid var(--signal);padding-left:10px}
+.recent{display:flex;flex-wrap:wrap;gap:6px}
+.recent button{font:500 13px var(--mono);border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;padding:6px 10px}
+.app-footer{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:20px 0 calc(16px + env(safe-area-inset-bottom,0px))}
+.dev-by{color:var(--muted)}
+.dev-link{display:inline-flex;align-items:center;gap:4px;color:var(--text);text-decoration:none}
+.dev-link:hover{color:var(--primary);text-decoration:none}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="11" fill="var(--primary)"/><path d="M20 9v15m0 0-6-6m6 6 6-6M11 29h18" stroke="var(--primary-ink)" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div><h1>OutsiderDrop</h1><small>Kirim file & pesan tanpa internet</small></div>
+  </div>
+
+  <section class="card">
+    <h2>Jadi Host</h2>
+    <p>HP ini membuka ruang. Perangkat lain yang tersambung ke WiFi atau hotspot yang sama tinggal memindai QR.</p>
+    <p class="tip">Tanpa WiFi? Nyalakan <b>Hotspot</b> di HP ini dulu. Paket data boleh mati.</p>
+    <div class="ipline" id="ipLine">Mendeteksi jaringan…</div>
+    <button class="btn primary" id="hostBtn">Mulai sebagai Host</button>
+  </section>
+
+  <section class="card">
+    <h2>Gabung ke Host</h2>
+    <p>Pindai QR yang tampil di host, atau ketik alamatnya.</p>
+    <button class="btn" id="scanBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg>Pindai QR</button>
+    <div class="row"><input id="addr" placeholder="192.168.43.1:8080" inputmode="url" autocomplete="off" aria-label="Alamat host"><button class="btn" id="joinBtn" style="padding:0 18px">Gabung</button></div>
+    <div class="recent" id="recent"></div>
+  </section>
+</main>
+<footer class="app-footer">
+  <span class="dev-by">Developed by</span>
+  <a href="https://outsiderdev.com" target="_blank" rel="noopener" class="dev-link">
+    <img src="https://outsiderdev.com/img/ico.png" alt="OutsiderDev" height="18" onerror="this.remove()">
+    <strong>OutsiderDev</strong>
+  </a>
+</footer>
+<script>
+(function(){try{var t=localStorage.getItem('od-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+const app = window.ODApp;
+const $ = s => document.querySelector(s);
+function recent(){ try { return JSON.parse(localStorage.getItem('od-hosts')||'[]'); } catch { return []; } }
+function remember(a){ const r=[a].concat(recent().filter(x=>x!==a)).slice(0,4); try{localStorage.setItem('od-hosts',JSON.stringify(r));}catch{} }
+function join(a){ a=a.trim(); if(!a) return; remember(a); app && app.join(a); }
+function paintIp(){
+  try { const i = JSON.parse(app.info()); $('#ipLine').textContent = i.ip ? 'Alamat host: ' + i.ip + ':' + i.port : 'Belum tersambung ke WiFi/hotspot. Nyalakan hotspot atau sambung ke WiFi.'; }
+  catch { $('#ipLine').textContent = 'Buka halaman ini dari aplikasi OutsiderDrop.'; }
+}
+$('#hostBtn').onclick = () => app && app.host();
+$('#scanBtn').onclick = () => app && app.scan();
+$('#joinBtn').onclick = () => join($('#addr').value);
+$('#addr').addEventListener('keydown', e => { if (e.key === 'Enter') join($('#addr').value); });
+const r = recent();
+$('#recent').innerHTML = r.map(a => `<button data-a="${a.replace(/"/g,'')}">${a.replace(/[<>&]/g,'')}</button>`).join('');
+$('#recent').onclick = e => { if (e.target.dataset.a) join(e.target.dataset.a); };
+paintIp(); setInterval(paintIp, 4000);
+</script>
+</body>
+</html>
