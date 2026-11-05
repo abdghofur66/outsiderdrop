@@ -22,10 +22,12 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/config.json') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     const lo = isLoopback(req);
-    return res.end(JSON.stringify({ mode: 'local', room: 'LOKAL', url: MAIN_URL, save: lo, saveDir: lo ? SAVE_DIR : '' }));
+    return res.end(JSON.stringify({ mode: 'local', room: 'LOKAL', url: MAIN_URL, save: lo, saveDir: lo ? SAVE_DIR : '', canChoose: lo, pipe: true }));
   }
+  if (url.pathname.startsWith('/pipe/')) return handlePipe(req, res, url);
   if (url.pathname.startsWith('/save/')) return handleSave(req, res, url);
   if (url.pathname === '/open') return handleOpen(req, res, url);
+  if (url.pathname === '/choose-folder') return chooseFolder(req, res);
   let p = decodeURIComponent(url.pathname);
   if (p.endsWith('/')) p += 'index.html';
   const file = path.normalize(path.join(ROOT, p));
@@ -46,7 +48,55 @@ const server = http.createServer((req, res) => {
 let MAIN_URL = '';
 
 // ---------- Simpan langsung ke disk laptop host (hanya untuk browser di laptop host) ----------
-const SAVE_DIR = process.env.SAVE_DIR || path.join(os.homedir(), 'Downloads', 'OutsiderDrop');
+const { execFile, execFileSync } = require('child_process');
+const SETTINGS = path.join(os.homedir(), '.outsiderdrop.json');
+function readSettings() { try { return JSON.parse(fs.readFileSync(SETTINGS, 'utf8')); } catch { return {}; } }
+// Lokasi folder Downloads yang sebenarnya (ikut bila sudah dipindah ke drive lain)
+function downloadsDir() {
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders',
+        '/v', '{374DE290-123F-4565-9164-39C4925E467B}'], { encoding: 'utf8', windowsHide: true });
+      const m = out.match(/REG_(?:EXPAND_)?SZ\s+(.+)/);
+      if (m) {
+        const d = m[1].trim().replace(/%([^%]+)%/g, (_, k) => process.env[k] || process.env[k.toUpperCase()] || '');
+        if (d && fs.existsSync(d)) return d;
+      }
+    } else if (process.platform === 'linux') {
+      const d = execFileSync('xdg-user-dir', ['DOWNLOAD'], { encoding: 'utf8' }).trim();
+      if (d && d !== os.homedir() && fs.existsSync(d)) return d;
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Downloads');
+}
+let SAVE_DIR = process.env.SAVE_DIR || readSettings().saveDir || path.join(downloadsDir(), 'OutsiderDrop');
+
+// Dialog "Ganti folder" bawaan sistem (hanya dari browser di laptop host)
+function chooseFolder(req, res) {
+  const reply = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj || {})); };
+  if (req.method !== 'POST' || !isLoopback(req)) return reply(403);
+  req.resume();
+  let cmd, args;
+  if (process.platform === 'win32') {
+    const ps = `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; ` +
+      `$f.Description = 'Pilih folder untuk menyimpan file masuk OutsiderDrop'; $f.ShowNewFolderButton = $true; ` +
+      `$f.SelectedPath = '${SAVE_DIR.replace(/'/g, "''")}'; $w = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; ` +
+      `if ($f.ShowDialog($w) -eq 'OK') { [Console]::OutputEncoding = [Text.Encoding]::UTF8; $f.SelectedPath }`;
+    cmd = 'powershell.exe'; args = ['-NoProfile', '-STA', '-Command', ps];
+  } else if (process.platform === 'darwin') {
+    cmd = 'osascript'; args = ['-e', 'POSIX path of (choose folder with prompt "Pilih folder untuk file masuk OutsiderDrop")'];
+  } else {
+    cmd = 'zenity'; args = ['--file-selection', '--directory', '--title=Pilih folder untuk file masuk OutsiderDrop'];
+  }
+  execFile(cmd, args, { encoding: 'utf8', windowsHide: false }, (err, out) => {
+    const dir = (out || '').trim().replace(/[\\/]$/, '');
+    if (err || !dir) return reply(200, { saveDir: SAVE_DIR, changed: false });
+    SAVE_DIR = dir;
+    try { fs.writeFileSync(SETTINGS, JSON.stringify({ ...readSettings(), saveDir: dir }, null, 2)); } catch {}
+    console.log('  File masuk sekarang disimpan ke: ' + dir);
+    reply(200, { saveDir: dir, changed: true });
+  });
+}
 const saves = new Map();
 const savedFiles = new Map(); // id -> path file yang sudah selesai
 const isLoopback = req => /^(::1|127\.|::ffff:127\.)/.test(req.socket.remoteAddress || '');
@@ -58,7 +108,6 @@ function handleOpen(req, res, url) {
   req.resume();
   const file = savedFiles.get(url.searchParams.get('id'));
   if (!file || !fs.existsSync(file)) return done(404);
-  const { execFile } = require('child_process');
   const folder = url.searchParams.get('what') === 'folder';
   if (process.platform === 'win32') {
     if (folder) execFile('explorer.exe', ['/select,', file], () => {});
@@ -71,17 +120,85 @@ function handleOpen(req, res, url) {
   done(200);
 }
 
+function uniqueFile(sub, rawName) {
+  const dir = path.join(SAVE_DIR, clean(sub));
+  fs.mkdirSync(dir, { recursive: true });
+  const name = clean(rawName).replace(/[\\/]/g, '_') || 'file';
+  const ext = path.extname(name), base = name.slice(0, name.length - ext.length);
+  let file = path.join(dir, name);
+  for (let i = 1; fs.existsSync(file); i++) file = path.join(dir, `${base} (${i})${ext}`);
+  return file;
+}
+
+// ---------- Transfer cepat lewat host (HTTP streaming) ----------
+// Pengirim: POST /pipe/<id>?to=<penerima> berisi file utuh.
+// Penerima: GET /pipe/<id> (diteruskan langsung), atau POST /pipe/<id>/save bila penerima = browser di host (ditulis ke disk).
+const pipes = new Map();
+const clients = new Map(); // id perangkat -> klien websocket (untuk kabar progres)
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': '*' };
+function handlePipe(req, res, url) {
+  if (req.method === 'OPTIONS') { res.writeHead(204, { ...CORS, 'Access-Control-Max-Age': '86400' }); return res.end(); }
+  const m = url.pathname.match(/^\/pipe\/([A-Za-z0-9]{6,32})(\/save)?$/);
+  const fail = code => { if (!res.headersSent) res.writeHead(code, CORS); res.end(); };
+  if (!m) return fail(404);
+  const id = m[1];
+  let pp = pipes.get(id);
+  if (!pp) { pp = { id }; pipes.set(id, pp); setTimeout(() => { if (pipes.get(id) === pp && !pp.started) { pipes.delete(id); pp.src && pp.src.res.writeHead(408, CORS) && pp.src.res.end(); pp.dst && pp.dst.res.writeHead(408, CORS) && pp.dst.res.end(); } }, 60000); }
+  if (req.method === 'POST' && !m[2]) {
+    pp.src = { req, res, len: Number(req.headers['content-length']) || 0 }; pp.to = url.searchParams.get('to') || '';
+  } else if (req.method === 'GET') {
+    pp.dst = { res };
+  } else if (req.method === 'POST' && m[2]) {
+    if (!isLoopback(req)) return fail(403);
+    req.resume();
+    pp.dst = { res, save: true, sub: url.searchParams.get('path'), name: url.searchParams.get('name') };
+  } else return fail(405);
+  connectPipe(pp);
+}
+function connectPipe(pp) {
+  if (!pp.src || !pp.dst || pp.started) return;
+  pp.started = true;
+  const { req, res: srcRes, len } = pp.src;
+  const dst = pp.dst;
+  let got = 0, done = false, lastTick = 0;
+  const finish = ok => {
+    if (done) return; done = true; pipes.delete(pp.id);
+    if (!srcRes.headersSent) srcRes.writeHead(ok ? 200 : 500, CORS);
+    srcRes.end();
+  };
+  const tick = () => {
+    const now = Date.now(); if (now - lastTick < 250 && got < len) return; lastTick = now;
+    const c = clients.get(pp.to); if (c) sendWS(c.sock, JSON.stringify({ type: 'pipe', id: pp.id, got }));
+  };
+  if (dst.save) {
+    let file;
+    try { file = uniqueFile(dst.sub, dst.name); } catch { dst.res.writeHead(500, CORS); dst.res.end(); req.destroy(); return finish(false); }
+    const out = fs.createWriteStream(file, { highWaterMark: 4 << 20 });
+    req.on('data', c => { got += c.length; tick(); });
+    req.pipe(out);
+    out.on('finish', () => {
+      const ok = got === len;
+      if (ok) savedFiles.set(pp.id, file); else fs.unlink(file, () => {});
+      dst.res.writeHead(ok ? 200 : 500, { 'Content-Type': 'application/json', ...CORS }); dst.res.end(JSON.stringify({ file }));
+      finish(ok);
+    });
+    req.on('aborted', () => { out.destroy(); fs.unlink(file, () => {}); if (!dst.res.headersSent) { dst.res.writeHead(499, CORS); dst.res.end(); } finish(false); });
+  } else {
+    dst.res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': len, 'Cache-Control': 'no-store', ...CORS });
+    req.on('data', c => { got += c.length; });
+    req.pipe(dst.res);
+    req.on('end', () => finish(got === len));
+    req.on('aborted', () => { dst.res.destroy(); finish(false); });
+    dst.res.on('close', () => { if (!done && got < len) { req.destroy(); finish(false); } });
+  }
+}
+
 function handleSave(req, res, url) {
   const done = (code, msg) => { res.writeHead(code, { 'Content-Type': 'text/plain' }); res.end(msg || ''); };
   if (req.method !== 'POST' || !isLoopback(req)) return done(403);
   const op = url.pathname.slice(6), id = url.searchParams.get('id');
   if (op === 'open') {
-    const dir = path.join(SAVE_DIR, clean(url.searchParams.get('path')));
-    fs.mkdirSync(dir, { recursive: true });
-    const name = clean(url.searchParams.get('name')).replace(/[\\/]/g, '_') || 'file';
-    const ext = path.extname(name), base = name.slice(0, name.length - ext.length);
-    let file = path.join(dir, name);
-    for (let i = 1; fs.existsSync(file); i++) file = path.join(dir, `${base} (${i})${ext}`);
+    const file = uniqueFile(url.searchParams.get('path'), url.searchParams.get('name'));
     saves.set(id, { file, fd: fs.openSync(file, 'w') });
     req.resume(); return req.on('end', () => done(200));
   }
@@ -131,6 +248,7 @@ server.on('upgrade', (req, sock) => {
   sendWS(sock, JSON.stringify({ type: 'welcome', id: me.id, peers: [...room].map(info) }));
   for (const c of room) sendWS(c.sock, JSON.stringify({ type: 'join', peer: info(me) }));
   room.add(me);
+  clients.set(me.id, me);
   console.log(`+ ${me.name} masuk (${room.size} perangkat)`);
 
   let buf = Buffer.alloc(0), frag = [], fragOp = 1;
@@ -183,6 +301,7 @@ server.on('upgrade', (req, sock) => {
   const bye = () => {
     if (!room.has(me)) return;
     room.delete(me);
+    clients.delete(me.id);
     for (const c of room) sendWS(c.sock, JSON.stringify({ type: 'leave', id: me.id }));
     if (!room.size) rooms.delete(code);
     console.log(`- ${me.name} keluar (${room.size} perangkat)`);
@@ -217,6 +336,7 @@ server.on('listening', () => {
   try { require('qrcode-terminal').generate(main, { small: true }, q => console.log(q.replace(/^/gm, '  '))); } catch {}
   console.log('  Atau buka alamat:');
   (ips.length ? ips : ['127.0.0.1']).forEach(ip => console.log(`    http://${ip}:${port}`));
+  console.log('\n  File masuk disimpan ke: ' + SAVE_DIR);
   console.log('\n  Biarkan jendela ini terbuka selama dipakai. Tutup untuk berhenti.\n');
   openBrowser(`http://localhost:${port}`);
 });

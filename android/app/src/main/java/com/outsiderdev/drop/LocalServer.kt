@@ -36,6 +36,7 @@ class LocalServer(private val ctx: Context) {
     @Volatile var port = 8080; private set
     @Volatile var signal = ""      // kosong = HP ini host; isi "ip:port" = gabung ke host lain
     @Volatile var shareUrl = ""
+    private val CORS = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: *"
     private var server: ServerSocket? = null
     private val rooms = ConcurrentHashMap<String, CopyOnWriteArraySet<Client>>()
     private val saves = ConcurrentHashMap<String, Sink>()
@@ -103,9 +104,9 @@ class LocalServer(private val ctx: Context) {
     }
 
     private fun respond(out: OutputStream, code: Int, type: String, body: ByteArray) {
-        val status = when (code) { 200 -> "OK"; 403 -> "Forbidden"; 404 -> "Not Found"; else -> "Error" }
+        val status = when (code) { 200 -> "OK"; 403 -> "Forbidden"; 404 -> "Not Found"; 408 -> "Request Timeout"; else -> "Error" }
         out.write(("HTTP/1.1 $code $status\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\n" +
-                "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray())
+                "Cache-Control: no-store\r\n$CORS\r\nConnection: close\r\n\r\n").toByteArray())
         out.write(body); out.flush()
     }
 
@@ -126,13 +127,107 @@ class LocalServer(private val ctx: Context) {
                     val j = JSONObject()
                         .put("mode", "local").put("room", "LOKAL").put("app", true)
                         .put("signal", signal).put("url", shareUrl)
-                        .put("save", loopback).put("saveDir", "Download/OutsiderDrop")
+                        .put("save", loopback).put("saveDir", "Download/OutsiderDrop").put("pipe", true)
                     respond(out, 200, "application/json", j.toString().toByteArray())
                 }
+                req.method == "OPTIONS" -> {
+                    out.write("HTTP/1.1 204 No Content\r\n$CORS\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()); out.flush()
+                }
+                req.path.startsWith("/pipe/") -> handlePipe(req, input, out, loopback)
                 req.path.startsWith("/save/") -> handleSave(req, input, out, loopback)
                 else -> serveAsset(req.path, out)
             }
         } finally { try { sock.close() } catch (_: Exception) { } }
+    }
+
+    // ---------------- Transfer cepat lewat host (HTTP streaming) ----------------
+    // Pengirim POST /pipe/<id>?to=<penerima>; penerima GET /pipe/<id> atau POST /pipe/<id>/save (penerima = HP host ini).
+    private class Pipe {
+        var srcIn: InputStream? = null; var srcLen = -1L; var to = ""
+        var dstOut: OutputStream? = null; var sink: Sink? = null
+        var finished = false; var ok = false; var claimed = false
+    }
+    private val pipes = ConcurrentHashMap<String, Pipe>()
+    private val pipeLock = Object()
+
+    private fun handlePipe(req: Req, input: InputStream, out: OutputStream, loopback: Boolean) {
+        val m = Regex("^/pipe/([A-Za-z0-9]{6,32})(/save)?$").find(req.path) ?: return respond(out, 404, "text/plain", ByteArray(0))
+        val id = m.groupValues[1]
+        val save = m.groupValues[2].isNotEmpty()
+        val pp = pipes.getOrPut(id) { Pipe() }
+        val deadline = System.currentTimeMillis() + 60_000
+        if (req.method == "POST" && !save) {
+            // ---- pengirim: tunggu penerima, lalu salin aliran data
+            val len = req.headers["content-length"]?.toLongOrNull() ?: return respond(out, 411, "text/plain", ByteArray(0))
+            synchronized(pipeLock) {
+                pp.srcIn = input; pp.srcLen = len; pp.to = req.query["to"] ?: ""
+                pipeLock.notifyAll()
+                while (pp.dstOut == null && pp.sink == null && System.currentTimeMillis() < deadline) pipeLock.wait(500)
+            }
+            val dst = pp.dstOut ?: pp.sink?.stream
+            if (dst == null) { pipes.remove(id); return respond(out, 408, "text/plain", ByteArray(0)) }
+            var got = 0L; var lastTick = 0L
+            val buf = ByteArray(1 shl 18)
+            try {
+                while (got < len) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), len - got).toInt())
+                    if (n < 0) break
+                    dst.write(buf, 0, n); got += n
+                    if (pp.sink != null) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastTick > 250 || got == len) { lastTick = now; findClient(pp.to)?.send("{\"type\":\"pipe\",\"id\":\"$id\",\"got\":$got}") }
+                    }
+                }
+                dst.flush()
+            } catch (_: Exception) { }
+            synchronized(pipeLock) { pp.ok = got == len; pp.finished = true; pipeLock.notifyAll() }
+            pipes.remove(id)
+            respond(out, if (pp.ok) 200 else 500, "text/plain", ByteArray(0))
+        } else if (req.method == "GET" || (save && req.method == "POST")) {
+            if (save && !loopback) return respond(out, 403, "text/plain", ByteArray(0))
+            if (save) skip(input, req.headers["content-length"]?.toLongOrNull() ?: 0L)
+            // ---- penerima: tunggu pengirim
+            synchronized(pipeLock) {
+                if (pp.claimed) return respond(out, 409, "text/plain", ByteArray(0))
+                pp.claimed = true
+                while (pp.srcIn == null && System.currentTimeMillis() < deadline) pipeLock.wait(500)
+            }
+            if (pp.srcIn == null) { pipes.remove(id); return respond(out, 408, "text/plain", ByteArray(0)) }
+            if (save) {
+                val sub = cleanSeg(req.query["path"] ?: "").joinToString("/")
+                val name = cleanSeg(req.query["name"] ?: "file").joinToString("_").ifEmpty { "file" }
+                val sink = try { openSink(sub, name) } catch (_: Exception) { null }
+                synchronized(pipeLock) { pp.sink = sink; if (sink == null) pp.finished = true; pipeLock.notifyAll() }
+                if (sink == null) return respond(out, 500, "text/plain", ByteArray(0))
+            } else {
+                out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${pp.srcLen}\r\n" +
+                        "Cache-Control: no-store\r\n$CORS\r\nConnection: close\r\n\r\n").toByteArray())
+                out.flush()
+                synchronized(pipeLock) { pp.dstOut = out; pipeLock.notifyAll() }
+            }
+            synchronized(pipeLock) { while (!pp.finished) pipeLock.wait(1000) }
+            if (save) {
+                val sink = pp.sink!!
+                try { sink.stream.close() } catch (_: Exception) { }
+                if (pp.ok) {
+                    if (sink.uri != null && Build.VERSION.SDK_INT >= 29) {
+                        val v = ContentValues(); v.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        ctx.contentResolver.update(sink.uri, v, null, null)
+                    }
+                    saved[id] = Pair(sink.uri, sink.file)
+                    respond(out, 200, "application/json", "{}".toByteArray())
+                } else {
+                    sink.uri?.let { ctx.contentResolver.delete(it, null, null) }
+                    sink.file?.delete()
+                    respond(out, 500, "text/plain", ByteArray(0))
+                }
+            }
+        } else respond(out, 405, "text/plain", ByteArray(0))
+    }
+
+    private fun findClient(id: String): Client? {
+        for (room in rooms.values) for (c in room) if (c.id == id) return c
+        return null
     }
 
     private fun serveAsset(p: String, out: OutputStream) {

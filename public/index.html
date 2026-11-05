@@ -108,7 +108,7 @@ header.top{display:flex;align-items:center;gap:12px;padding-block:14px;flex-wrap
 .pick-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .savebar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;font-size:14px}
 .savebar svg{width:22px;height:22px;color:var(--signal);flex:none}
-.savebar span{flex:1;min-width:180px}
+.savebar span{flex:1;min-width:180px;min-width:0;overflow-wrap:anywhere}
 .savebar small{display:block;color:var(--muted);font-size:12px}
 .tf .path{font:500 11px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tf{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:12px}
@@ -441,6 +441,8 @@ async function onSignal(m) {
     toast(m.peer.name + ' masuk ke ruang.');
   } else if (m.type === 'leave') {
     const p = S.peers.get(m.id); if (p) { closePeer(p); S.peers.delete(m.id); if (S.target === m.id) setTarget('all'); renderPeers(); toast(p.name + ' keluar.'); }
+  } else if (m.type === 'pipe') {
+    const inc = pipesIn.get(m.id); if (inc) { inc.got = m.got; updTransfer(inc.ui, m.got, inc.size); }
   } else if (m.type === 'relay') {
     const p = S.peers.get(m.from); if (!p) return;
     if (!p.relay) useRelay(p);
@@ -531,6 +533,7 @@ async function pump(p) {
   const job = p.queue.shift();
   const { file, id, ui, path } = job;
   ui._job = job;
+  if (p.relay && CONFIG.pipe) { await sendPipe(p, job); p.sending = false; return pump(p); }
   try {
     p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type }));
     let off = 0, last = 0;
@@ -555,6 +558,61 @@ async function pump(p) {
   p.sending = false; pump(p);
 }
 
+/* ---------- Transfer cepat lewat host (HTTP) ---------- */
+const pipeBase = () => location.protocol + '//' + (CONFIG.signal || location.host);
+function sendPipe(p, job) {
+  const { file, id, ui, path } = job;
+  return new Promise(resolve => {
+    try { p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type, pipe: true })); }
+    catch { failTransfer(ui, 'Gagal: koneksi terputus'); return resolve(); }
+    const x = new XMLHttpRequest(); job.xhr = x;
+    x.open('POST', pipeBase() + '/pipe/' + id + '?to=' + encodeURIComponent(p.id));
+    x.upload.onprogress = e => updTransfer(ui, e.loaded, file.size);
+    x.onload = () => { x.status === 200 ? updTransfer(ui, file.size, file.size, 'Terkirim') : failTransfer(ui, x.status === 408 ? 'Gagal: penerima tidak merespons' : 'Gagal: koneksi terputus'); resolve(); };
+    x.onerror = () => { failTransfer(ui, 'Gagal: koneksi terputus'); resolve(); };
+    x.onabort = () => { failTransfer(ui, 'Dibatalkan'); resolve(); };
+    x.send(file);
+  });
+}
+const pipesIn = new Map();
+async function receivePipe(p, inc) {
+  pipesIn.set(inc.id, inc);
+  try {
+    if (CONFIG.save && !CONFIG.signal) {
+      // penerima = host itu sendiri: server langsung menulis ke disk, progres dikabarkan lewat sinyal
+      const r = await fetch('/pipe/' + inc.id + '/save?' + new URLSearchParams({ name: inc.name, path: inc.path || '' }), { method: 'POST' });
+      if (!r.ok) throw new Error('gagal');
+      updTransfer(inc.ui, 1, 1, 'Tersimpan'); inc.ui.querySelector('.pr').title = CONFIG.saveDir || '';
+      savedActions(inc);
+    } else {
+      const r = await fetch(pipeBase() + '/pipe/' + inc.id);
+      if (!r.ok || !r.body) throw new Error('gagal');
+      const reader = r.body.getReader();
+      if (inc.disk) inc.w = await (inc.fh = await openDiskFile(inc.path, inc.name)).createWritable();
+      if (inc.app) await appSave('open', inc, null);
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        inc.got += value.byteLength;
+        if (inc.disk) await inc.w.write(value);
+        else if (inc.app) { inc.abuf.push(value); inc.alen += value.byteLength; if (inc.alen >= 4194304) { appFlush(inc); await inc.chain; } }
+        else inc.parts.push(value);
+        const now = performance.now(); if (now - inc.last > 150) { updTransfer(inc.ui, inc.got, inc.size); inc.last = now; }
+      }
+      if (inc.got !== inc.size) throw new Error('kurang');
+      if (inc.disk) { await inc.w.close(); updTransfer(inc.ui, 1, 1, 'Tersimpan di folder ' + S.dir.name); actBtn(inc.ui, 'Buka file', async () => openBlob(await inc.fh.getFile()), true); }
+      else if (inc.app) { appFlush(inc); await inc.chain; await appSave('close', inc, null); updTransfer(inc.ui, 1, 1, 'Tersimpan'); savedActions(inc); }
+      else finishIncoming(inc.ui, new Blob(inc.parts, { type: inc.mime || 'application/octet-stream' }), inc.name);
+    }
+    toast('Diterima: ' + inc.name);
+  } catch (err) {
+    failTransfer(inc.ui, 'Gagal menerima (koneksi terputus)');
+    if (inc.w) inc.w.abort().catch(() => {});
+    if (inc.app) appSave('abort', inc, null).catch(() => {});
+  }
+  pipesIn.delete(inc.id);
+}
+
 /* ---------- Terima data ---------- */
 function onData(p, data) {
   if (typeof data !== 'string') {
@@ -571,7 +629,11 @@ function onData(p, data) {
     return;
   }
   const m = JSON.parse(data);
-  if (m.t === 'file') {
+  if (m.t === 'file' && m.pipe) {
+    const inc = { ...m, got: 0, parts: [], last: 0, disk: !!S.dir, app: !S.dir && !!CONFIG.save && !!CONFIG.signal, abuf: [], alen: 0, chain: Promise.resolve(), ui: addTransfer({ id: m.id, name: m.name, path: m.path, size: m.size, dir: 'in', peer: p.name }) };
+    notify('File masuk dari ' + p.name, m.name + ' · ' + fmtSize(m.size));
+    receivePipe(p, inc);
+  } else if (m.t === 'file') {
     const inc = p.incoming = { ...m, got: 0, parts: [], blobs: [], last: 0, disk: !!S.dir, app: !S.dir && !!CONFIG.save, abuf: [], alen: 0, ui: addTransfer({ id: m.id, name: m.name, path: m.path, size: m.size, dir: 'in', peer: p.name }) };
     if (inc.app) inc.chain = appSave('open', inc, null);
     if (inc.disk) inc.chain = openDiskFile(m.path, m.name).then(fh => { inc.fh = fh; return fh.createWritable(); }).then(w => { inc.w = w; });
@@ -614,13 +676,14 @@ function appFlush(inc) {
 /* ---------- UI transfer ---------- */
 function addTransfer({ name, path, size, dir, peer }) {
   const el = document.createElement('div');
+  el._size = size;
   el.className = 'tf ' + dir;
   const ext = name.includes('.') ? name.split('.').pop().slice(0, 4).toUpperCase() : 'FILE';
   const arrow = dir === 'in'
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13m0 0-5-5m5 5 5-5"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V7m0 0-5 5m5-5 5 5"/></svg>';
   el.innerHTML = `<div class="ic" title="${dir === 'in' ? 'File masuk' : 'File keluar'}">${arrow}<b>${esc(ext)}</b></div><div style="min-width:0"><div class="nm" title="${esc(name)}">${esc(name)}</div>${path ? `<div class="path">${esc(path)}/</div>` : ''}<div class="meta"><span class="dir">${dir === 'in' ? 'MASUK' : 'KELUAR'}</span><span class="st">${dir === 'out' ? 'ke ' : 'dari '}${esc(peer)}</span> · <span class="pr">0%</span> · ${fmtSize(size)}</div><div class="bar"><i></i></div></div><div class="act"></div>`;
-  if (dir === 'out') { const b = document.createElement('button'); b.textContent = 'Batal'; b.onclick = () => { for (const p of S.peers.values()) { const j = p.queue.find(q => q.ui === el); if (j) { p.queue.splice(p.queue.indexOf(j), 1); failTransfer(el, 'Dibatalkan'); } } el._job && (el._job.cancel = true); }; el.querySelector('.act').append(b); }
+  if (dir === 'out') { const b = document.createElement('button'); b.textContent = 'Batal'; b.onclick = () => { for (const p of S.peers.values()) { const j = p.queue.find(q => q.ui === el); if (j) { p.queue.splice(p.queue.indexOf(j), 1); failTransfer(el, 'Dibatalkan'); } } if (el._job) { el._job.cancel = true; el._job.xhr && el._job.xhr.abort(); } }; el.querySelector('.act').append(b); }
   $('#transfers').prepend(el);
   countTransfers();
   return el;
@@ -653,11 +716,30 @@ function savedActions(inc) {
   actBtn(inc.ui, 'Buka file', () => openSaved(inc.id, 'file'), true);
   actBtn(inc.ui, 'Buka folder', () => openSaved(inc.id, 'folder'));
 }
+const fmtEta = sec => { sec = Math.max(0, Math.round(sec)); const h = sec / 3600 | 0, m = (sec % 3600) / 60 | 0, s2 = sec % 60; return h ? `${h}j ${m}m` : m ? `${m}m ${String(s2).padStart(2, '0')}d` : `${s2}d`; };
 function updTransfer(el, got, size, label) {
-  const pct = size ? Math.round(got / size * 100) : 100;
+  const now = performance.now();
+  if (!el._sp) el._sp = { t0: now, t: now, b: got, b0: got, rate: 0, real: 0 };
+  const sp = el._sp;
+  if (label) {
+    el.querySelector('.bar i').style.width = '100%';
+    const secs = (now - sp.t0) / 1000, total = el._size || 0;
+    const avg = secs > 0.3 && total ? ' · rata-rata ' + fmtSize(total / secs) + '/s' : '';
+    el.querySelector('.pr').textContent = label + avg;
+    el.classList.add('done'); el.querySelector('.act').innerHTML = '';
+    return;
+  }
+  el._size = size;
+  const pct = size ? Math.min(100, Math.floor(got / size * 100)) : 100;
   el.querySelector('.bar i').style.width = pct + '%';
-  el.querySelector('.pr').textContent = label || pct + '%';
-  if (label) { el.classList.add('done'); el.querySelector('.act').innerHTML = ''; }
+  const dt = (now - sp.t) / 1000;
+  if (dt >= 0.5) {
+    const r = (got - sp.b) / dt;
+    sp.rate = sp.rate ? sp.rate * 0.6 + r * 0.4 : r; sp.t = now; sp.b = got;
+  }
+  let txt = pct + '%';
+  if (sp.rate > 0) txt += ' · ' + fmtSize(sp.rate) + '/s · sisa ' + fmtEta((size - got) / sp.rate);
+  el.querySelector('.pr').textContent = txt;
 }
 function failTransfer(el, text) { el.classList.add('fail'); el.querySelector('.pr').textContent = text; el.querySelector('.act').innerHTML = ''; }
 function finishIncoming(el, blob, name) {
@@ -715,7 +797,25 @@ async function openDiskFile(path, name) {
   }
 }
 function setupSaveBar() {
-if (CONFIG.save) return; // laptop host / aplikasi Android: sudah otomatis tersimpan ke folder unduhan
+if (CONFIG.save) {
+  // laptop host / aplikasi Android: file masuk otomatis disimpan ke folder ini
+  $('#saveBar').hidden = false;
+  $('#saveBar small').textContent = 'File masuk otomatis disimpan di sini, langsung ke disk.';
+  $('#saveDirText').textContent = CONFIG.saveDir || 'Download/OutsiderDrop';
+  $('#saveDirText').title = CONFIG.saveDir || '';
+  $('#saveDirReset').hidden = true;
+  if (!CONFIG.canChoose) { $('#saveDirBtn').hidden = true; return; }
+  $('#saveDirBtn').textContent = 'Ganti folder';
+  $('#saveDirBtn').onclick = async () => {
+    const b = $('#saveDirBtn'); b.disabled = true; toast('Pilih folder di jendela yang terbuka di laptop ini.');
+    try {
+      const r = await fetch('/choose-folder', { method: 'POST' }).then(r => r.json());
+      if (r.changed) { CONFIG.saveDir = r.saveDir; $('#saveDirText').textContent = r.saveDir; $('#saveDirText').title = r.saveDir; toast('File masuk sekarang disimpan ke ' + r.saveDir); }
+    } catch { toast('Tidak bisa membuka pemilih folder.', true); }
+    b.disabled = false;
+  };
+  return;
+}
 if ('showDirectoryPicker' in window && isSecureContext) {
   $('#saveBar').hidden = false;
   $('#saveDirBtn').onclick = async () => {

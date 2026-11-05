@@ -27,7 +27,8 @@ pindai QR dari host atau buka alamatnya, misal `http://192.168.43.1:8080`.
 - Linux: `chmod +x outsiderdrop-linux-x64 && ./outsiderdrop-linux-x64`
 
 Jendela akan menampilkan QR + alamat, dan browser host terbuka otomatis.
-File yang diterima **browser di laptop host** langsung ditulis ke folder `Downloads/OutsiderDrop` (aman untuk file GB).
+File yang diterima **browser di laptop host** langsung ditulis ke folder `OutsiderDrop` di dalam folder **Downloads Windows yang sebenarnya**
+(ikut bila Downloads sudah dipindah ke drive lain). Tombol **Ganti folder** di aplikasi untuk memilih folder lain; pilihan disimpan di `~/.outsiderdrop.json`.
 Punya Node.js? Bisa juga `node server-lokal.js`.
 
 ### Host / klien di HP Android (APK)
