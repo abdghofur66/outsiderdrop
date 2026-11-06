@@ -1,5 +1,7 @@
 # OutsiderDrop
 
+[![Lisensi: MIT](https://img.shields.io/badge/Lisensi-MIT-green.svg)](LICENSE)
+
 Kirim file (sampai ukuran GB) dan pesan langsung antarperangkat: Android, iPhone, Windows, Mac, Linux.
 Murni lokal: semua perangkat di WiFi/hotspot yang sama, tanpa internet dan tanpa kuota.
 
@@ -46,3 +48,10 @@ cd ~/outsiderdrop && node server-lokal.js
 ## Catatan
 - File sangat besar (beberapa GB) ditampung sementara oleh browser penerima sebelum disimpan; pastikan ruang penyimpanan cukup. Chrome/Edge di laptop paling lancar untuk file GB.
 - Riwayat pesan disimpan di perangkat masing-masing (bisa dihapus dengan tombol **Hapus riwayat**).
+
+## Lisensi
+OutsiderDrop adalah perangkat lunak open source berlisensi [MIT](LICENSE).
+Bebas dipakai, dipelajari, diubah, dan dibagikan ulang (termasuk untuk keperluan komersial),
+asalkan tetap mencantumkan pemberitahuan hak cipta dan lisensi ini.
+
+Copyright (c) 2026 Abdul Ghofur Iswahyudi, [OutsiderDev](https://outsiderdev.com).

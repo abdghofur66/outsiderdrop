@@ -8,8 +8,8 @@
     "build": "pkg . --compress GZip --out-path dist"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Abdul Ghofur Iswahyudi (OutsiderDev) <https://outsiderdev.com>",
+  "license": "MIT",
   "dependencies": {
     "qrcode-terminal": "^0.12.0"
   },
