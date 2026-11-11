@@ -32,7 +32,15 @@ class MainActivity : AppCompatActivity() {
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
+        // parseResult bawaan hanya membaca satu file; pilihan banyak file ada di clipData
+        val uris = mutableListOf<Uri>()
+        val data = r.data
+        if (r.resultCode == RESULT_OK && data != null) {
+            val clip = data.clipData
+            if (clip != null) for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris.add(it) }
+            else data.data?.let { uris.add(it) }
+        }
+        fileCallback?.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
         fileCallback = null
     }
 
