@@ -538,7 +538,18 @@ async function pump(p) {
   const job = p.queue.shift();
   const { file, id, ui, path } = job;
   ui._job = job;
-  if (p.relay && CONFIG.pipe) { await sendPipe(p, job); p.sending = false; return pump(p); }
+  if (p.relay && CONFIG.pipe && !job.viaWs) {
+    const r = await sendPipe(p, job);
+    if (r && r.fail && !job.cancel) {
+      // Jalur HTTP gagal: batalkan di penerima, lalu kirim ulang lewat jalur cadangan (WebSocket)
+      try { p.send(JSON.stringify({ t: 'pipe-abort', id })); } catch {}
+      job.firstError = r.fail; job.viaWs = true; job.id = rid(10);
+      ui.classList.remove('fail'); ui._sp = null;
+      ui.querySelector('.pr').textContent = 'Mencoba jalur cadangan…';
+      p.queue.unshift(job);
+    }
+    p.sending = false; return pump(p);
+  }
   try {
     p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type }));
     let off = 0, last = 0;
@@ -557,7 +568,7 @@ async function pump(p) {
     p.send(JSON.stringify({ t: 'end', id }));
     updTransfer(ui, file.size, file.size, 'Terkirim');
   } catch (err) {
-    failTransfer(ui, err.message === 'batal' ? 'Dibatalkan' : 'Gagal: koneksi terputus');
+    failTransfer(ui, err.message === 'batal' ? 'Dibatalkan' : 'Gagal: koneksi terputus' + (job.firstError ? ' (jalur utama: ' + job.firstError + ')' : ''));
     try { p.send(JSON.stringify({ t: 'abort', id })); } catch {}
   }
   p.sending = false; pump(p);
@@ -581,36 +592,43 @@ async function directBase(p) {
 async function sendPipe(p, job) {
   const { file, id, ui, path } = job;
   const direct = await directBase(p);
+  const target = direct || pipeBase();
   return new Promise(resolve => {
     try { p.send(JSON.stringify({ t: 'file', id, name: file.name, path, size: file.size, mime: file.type, pipe: true, direct: !!direct })); }
-    catch { failTransfer(ui, 'Gagal: koneksi terputus'); return resolve(); }
+    catch { failTransfer(ui, 'Gagal: koneksi ke host terputus'); return resolve({ fail: 'sinyal putus' }); }
     const x = new XMLHttpRequest(); job.xhr = x;
-    x.open('POST', (direct || pipeBase()) + '/pipe/' + id + '?to=' + encodeURIComponent(p.id));
+    x.open('POST', target + '/pipe/' + id + '?to=' + encodeURIComponent(p.id));
     x.upload.onprogress = e => updTransfer(ui, e.loaded, file.size);
-    x.onload = () => { x.status === 200 ? updTransfer(ui, file.size, file.size, 'Terkirim') : failTransfer(ui, x.status === 408 ? 'Gagal: penerima tidak merespons' : 'Gagal: koneksi terputus'); resolve(); };
-    x.onerror = () => { failTransfer(ui, 'Gagal: koneksi terputus'); resolve(); };
-    x.onabort = () => { failTransfer(ui, 'Dibatalkan'); resolve(); };
+    const where = direct ? 'perangkat ' + p.name : 'host';
+    x.onload = () => {
+      if (x.status === 200) { updTransfer(ui, file.size, file.size, 'Terkirim'); return resolve({ ok: true }); }
+      resolve({ fail: x.status === 408 ? p.name + ' tidak merespons' : x.status === 500 ? p.name + ' gagal menyimpan / koneksi putus' : 'HTTP ' + x.status + ' dari ' + where });
+    };
+    x.onerror = () => resolve({ fail: 'tidak bisa menjangkau ' + where + ' (' + target.replace(/^https?:\/\//, '') + ')' });
+    x.onabort = () => { failTransfer(ui, 'Dibatalkan'); resolve({ cancel: true }); };
     x.send(file);
   });
 }
 const pipesIn = new Map();
 async function receivePipe(p, inc) {
   pipesIn.set(inc.id, inc);
+  inc.ctrl = new AbortController();
+  const sig = inc.ctrl.signal;
   try {
     if ((CONFIG.save && !CONFIG.signal) || (inc.direct && CONFIG.save)) {
       // penerima = host itu sendiri, atau aplikasi yang dikirimi langsung: server di perangkat ini menulis ke disk
       let poll = null;
       if (inc.direct) poll = setInterval(() => fetch('/pipe/' + inc.id + '/progress').then(r => r.ok ? r.json() : null).then(j => { if (j && j.got) updTransfer(inc.ui, j.got, inc.size); }).catch(() => {}), 400);
-      const r = await fetch('/pipe/' + inc.id + '/save?' + new URLSearchParams({ name: inc.name, path: inc.path || '' }), { method: 'POST' }).finally(() => poll && clearInterval(poll));
-      if (!r.ok) throw new Error('gagal');
+      const r = await fetch('/pipe/' + inc.id + '/save?' + new URLSearchParams({ name: inc.name, path: inc.path || '' }), { method: 'POST', signal: sig }).finally(() => poll && clearInterval(poll));
+      if (!r.ok) throw new Error(r.status === 408 ? 'pengirim tidak tersambung' : 'gagal menyimpan di perangkat ini (HTTP ' + r.status + ')');
       updTransfer(inc.ui, 1, 1, 'Tersimpan'); inc.ui.querySelector('.pr').title = CONFIG.saveDir || '';
       savedActions(inc);
     } else {
-      const r = await fetch(pipeBase() + '/pipe/' + inc.id);
-      if (!r.ok || !r.body) throw new Error('gagal');
+      const r = await fetch(pipeBase() + '/pipe/' + inc.id, { signal: sig }).catch(() => { throw new Error('tidak bisa menjangkau host'); });
+      if (!r.ok || !r.body) throw new Error('host menjawab HTTP ' + r.status);
       const reader = r.body.getReader();
       if (inc.disk) inc.w = await (inc.fh = await openDiskFile(inc.path, inc.name)).createWritable();
-      if (inc.app) await appSave('open', inc, null);
+      if (inc.app) await appSave('open', inc, null).catch(() => { throw new Error('gagal membuat file di Download/OutsiderDrop'); });
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -620,14 +638,14 @@ async function receivePipe(p, inc) {
         else inc.parts.push(value);
         const now = performance.now(); if (now - inc.last > 150) { updTransfer(inc.ui, inc.got, inc.size); inc.last = now; }
       }
-      if (inc.got !== inc.size) throw new Error('kurang');
+      if (inc.got !== inc.size) throw new Error('koneksi terputus di tengah jalan');
       if (inc.disk) { await inc.w.close(); updTransfer(inc.ui, 1, 1, 'Tersimpan di folder ' + S.dir.name); actBtn(inc.ui, 'Buka file', async () => openBlob(await inc.fh.getFile()), true); }
       else if (inc.app) { appFlush(inc); await inc.chain; await appSave('close', inc, null); updTransfer(inc.ui, 1, 1, 'Tersimpan'); savedActions(inc); }
       else finishIncoming(inc.ui, new Blob(inc.parts, { type: inc.mime || 'application/octet-stream' }), inc.name);
     }
     toast('Diterima: ' + inc.name);
   } catch (err) {
-    failTransfer(inc.ui, 'Gagal menerima (koneksi terputus)');
+    if (!inc.aborted) failTransfer(inc.ui, 'Gagal: ' + (err && err.message && !/abort/i.test(err.name) ? err.message : 'koneksi terputus'));
     if (inc.w) inc.w.abort().catch(() => {});
     if (inc.app) appSave('abort', inc, null).catch(() => {});
   }
@@ -650,6 +668,11 @@ function onData(p, data) {
     return;
   }
   const m = JSON.parse(data);
+  if (m.t === 'pipe-abort') {
+    const inc = pipesIn.get(m.id);
+    if (inc) { inc.aborted = true; try { inc.ctrl.abort(); } catch {} inc.ui.remove(); countTransfers(); pipesIn.delete(m.id); }
+    return;
+  }
   if (m.t === 'file' && m.pipe) {
     const inc = { ...m, got: 0, parts: [], last: 0, disk: !!S.dir, app: !S.dir && !!CONFIG.save && !!CONFIG.signal, abuf: [], alen: 0, chain: Promise.resolve(), ui: addTransfer({ id: m.id, name: m.name, path: m.path, size: m.size, dir: 'in', peer: p.name }) };
     notify('File masuk dari ' + p.name, m.name + ' · ' + fmtSize(m.size));
